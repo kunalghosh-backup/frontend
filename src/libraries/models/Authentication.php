@@ -10,7 +10,23 @@ class Authentication
   /*
    * Constructor
    */
-  public function __construct() { } 
+  public function __construct($params = null)
+  {
+    if(isset($params['credential']))
+      $this->credential = $params['credential'];
+    else
+      $this->credential = getCredential();
+
+    if(isset($params['session']))
+      $this->session = $params['session'];
+    else
+      $this->session = getSession();
+
+    if(isset($params['user']))
+      $this->user = $params['user'];
+    else
+      $this->user = new User;
+  } 
 
   /**
     * Checks to see if there are any authentication credentials present in this request
@@ -19,28 +35,30 @@ class Authentication
     */
   public function isRequestAuthenticated()
   {
-    $credentialObj = getCredential();
-    $userObj = new User;
-    if($userObj->isLoggedIn())
+    if($this->user->isLoggedIn())
       return true;
-    elseif($credentialObj->isOAuthRequest())
+    elseif($this->credential->isOAuthRequest())
       return true;
 
     return false;
   }
 
+  /**
+    * Requires authentication as a viewer or owner.
+    * Throws exception on failure.
+    *
+    * @return boolean
+    */
   public function requireAuthentication($requireOwner = true)
   {
-    $credentialObj = getCredential();
-    $userObj = new User;
-    if($credentialObj->isOAuthRequest())
+    if($this->credential->isOAuthRequest())
     {
-      if(!$credentialObj->checkRequest())
+      if(!$this->credential->checkRequest())
       {
-        OPException::raise(new OPAuthorizationOAuthException($credentialObj->getErrorAsString()));
+        OPException::raise(new OPAuthorizationOAuthException($this->credential->getErrorAsString()));
       }
     }
-    elseif(!$userObj->isLoggedIn() || ($requireOwner && !$userObj->isOwner()))
+    elseif(!$this->user->isLoggedIn() || ($requireOwner && !$this->user->isOwner()))
     {
       OPException::raise(new OPAuthorizationSessionException());
     }
@@ -53,22 +71,12 @@ class Authentication
     */
   public function requireCrumb($crumb = null)
   {
-    $credentialObj = getCredential();
-    if($credentialObj->isOAuthRequest())
+    if($this->credential->isOAuthRequest())
       return;
     elseif($crumb === null && isset($_REQUEST['crumb']))
       $crumb = $_REQUEST['crumb'];
 
-    if(getSession()->get('crumb') != $crumb)
+    if($this->session->get('crumb') != $crumb)
       OPException::raise(new OPAuthorizationException('Crumb does not match'));
   }
-}
-
-function getAuthentication()
-{
-  static $authentication;
-  if(!$authentication)
-    $authentication = new Authentication;
-
-  return $authentication;
 }

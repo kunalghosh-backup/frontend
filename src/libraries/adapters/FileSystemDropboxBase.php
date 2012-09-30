@@ -43,6 +43,20 @@ class FileSystemDropboxBase
     return true;
   }
 
+  public function getFileUrl($photo)
+  {
+    $directory = urlencode(date($this->directoryMask, $photo['dateTaken']));
+    try
+    {
+      return $this->dropbox->getFileUrl(sprintf('%s/%s/%s', $this->dropboxFolder, $directory, basename($photo['pathOriginal'])));
+    }
+    catch(Exception $e)
+    {
+      getLogger()->crit(sprintf('Could not get Dropbox file URL (%s). Message: %s', $photo['id'], $e->getMessage()));
+      return false;
+    }
+  }
+
   public function diagnostics()
   {
     $diagnostics = array();
@@ -106,6 +120,9 @@ class FileSystemDropboxBase
 
   public function putPhoto($localFile, $remoteFile)
   {
+    if(isset($_POST['uploadSource']) && $_POST['uploadSource'] === 'dropbox')
+      return true;
+
     if(!file_exists($localFile))
     {
       getLogger()->warn("The photo {$localFile} does not exist so putPhoto failed");
@@ -125,6 +142,9 @@ class FileSystemDropboxBase
 
   public function putPhotos($files)
   {
+    if(isset($_POST['uploadSource']) && $_POST['uploadSource'] === 'dropbox')
+      return true;
+
     foreach($files as $file)
     {
       list($localFile, $remoteFile) = each($file);

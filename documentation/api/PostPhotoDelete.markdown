@@ -58,7 +58,7 @@ _None_
 The response is in a standard [response envelope](http://theopenphotoproject.org/documentation/api/Envelope).
 
 * _message_, A string describing the result. Don't use this for anything but reading.
-* _code_, _200_ on success
+* _code_, _204_ on success
 * _result_, Boolean
 
 <a name="sample"></a>
@@ -66,12 +66,11 @@ The response is in a standard [response envelope](http://theopenphotoproject.org
 
     {
       "message":"",
-      "code":200,
+      "code":204,
       "result":true
     }
 
 
-[Action]: ../schemas/Action.markdown
 [purpose]: #purpose
 [endpoint]: #endpoint
 [parameters]: #parameters
@@ -80,4 +79,4 @@ The response is in a standard [response envelope](http://theopenphotoproject.org
 [example-php]: #example-php
 [response]: #response
 [sample]: #sample
-[openphoto-php]: https://github.com/openphoto/openphoto-php
+[openphoto-php]: https://github.com/photo/openphoto-php

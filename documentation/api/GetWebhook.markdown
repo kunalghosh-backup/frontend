@@ -80,7 +80,7 @@ The response is in a standard [response envelope](http://theopenphotoproject.org
     }
 
 
-[Webhook]: ../schemas/Webhook.markdown
+[Webhook]: http://theopenphotoproject.org/documentation/schemas/Webhook
 [purpose]: #purpose
 [endpoint]: #endpoint
 [parameters]: #parameters
@@ -89,4 +89,4 @@ The response is in a standard [response envelope](http://theopenphotoproject.org
 [example-php]: #example-php
 [response]: #response
 [sample]: #sample
-[openphoto-php]: https://github.com/openphoto/openphoto-php
+[openphoto-php]: https://github.com/photo/openphoto-php

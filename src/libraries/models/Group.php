@@ -10,29 +10,32 @@ class Group extends BaseModel
   /*
    * Constructor
    */
-  public function __construct()
+  public function __construct($params = null)
   {
     parent::__construct();
-    $this->user = new User;
+    if(isset($params['user']))
+      $this->user = $params['user'];
+    else
+      $this->user = new User;
   }
 
-  public function create()
+  public function create($params)
   {
-    $params = $this->getDefaultAttributes();
+    $whitelist = $validParams = $this->getDefaultAttributes();
     foreach($params as $key => $value)
     {
-      if(isset($_POST[$key]))
-        $params[$key] = $_POST[$key];
+      if(isset($whitelist[$key]))
+        $validParams[$key] = $params[$key];
     }
 
-    if(!$this->validate($params))
+    if(!$this->validate($validParams))
       return false;
 
     $nextGroupId = $this->user->getNextId('group');
     if($nextGroupId === false)
       return false;
 
-    $res = $this->db->putGroup($nextGroupId, $params);
+    $res = $this->db->putGroup($nextGroupId, $validParams);
     if($res === false)
       return false;
 
@@ -50,11 +53,6 @@ class Group extends BaseModel
     return $group;
   }
 
-  /**
-    * Get the next ID to be used for a action, group or photo.
-    * The ID is a base 32 string that represents an autoincrementing integer.
-    * @return string
-    */
   public function getGroups($email = null)
   {
     return $this->db->getGroups($email);
@@ -63,22 +61,22 @@ class Group extends BaseModel
   public function update($id, $params)
   {
     $defaults = $this->getDefaultAttributes();
-    $params = array();
+    $validParams = array();
     foreach($defaults as $key => $value)
     {
-      if(isset($_POST[$key]))
-        $params[$key] = $_POST[$key];
+      if(isset($params[$key]))
+        $validParams[$key] = $params[$key];
     }
-    if(!$this->validate($params, false))
+    if(!$this->validate($validParams, false))
       return false;
 
-    return $this->db->postGroup($id, $params);
+    return $this->db->postGroup($id, $validParams);
   }
 
   private function getDefaultAttributes()
   {
     return array(
-      'appId' => getConfig()->get('application')->appId,
+      'appId' => $this->config->application->appId,
       'name' => '',
       'members' => array()
     );

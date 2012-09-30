@@ -55,6 +55,12 @@ class FileSystemS3 implements FileSystemInterface
     return $responses->areOK();
   }
 
+  public function downloadPhoto($photo)
+  {
+    $fp = fopen($photo['pathOriginal'], 'r');
+    return $fp;
+  }
+
   /**
     * Gets diagnostic information for debugging.
     *
@@ -62,17 +68,18 @@ class FileSystemS3 implements FileSystemInterface
     */
   public function diagnostics()
   {
+    $utilityObj = new Utility;
     $diagnostics = array();
     $aclCheck = $this->fs->get_bucket_acl($this->bucket);
     if((int)$aclCheck->status == 200)
     {
       $storageSize = $this->fs->get_bucket_filesize($this->bucket, true);
-      $diagnostics[] = Utility::diagnosticLine(true, sprintf('Connection to bucket "%s" is okay.', $this->bucket));
-      $diagnostics[] = Utility::diagnosticLine(true, sprintf('Total space used in bucket "%s" is %s.', $this->bucket, $storageSize));
+      $diagnostics[] = $utilityObj->diagnosticLine(true, sprintf('Connection to bucket "%s" is okay.', $this->bucket));
+      $diagnostics[] = $utilityObj->diagnosticLine(true, sprintf('Total space used in bucket "%s" is %s.', $this->bucket, $storageSize));
     }
     else
     {
-      $diagnostics[] = Utility::diagnosticLine(false, sprintf('Connection to bucket "%s" is NOT okay.', $this->bucket));
+      $diagnostics[] = $utilityObj->diagnosticLine(false, sprintf('Connection to bucket "%s" is NOT okay.', $this->bucket));
     }
     return $diagnostics;
   }
@@ -211,7 +218,7 @@ class FileSystemS3 implements FileSystemInterface
     if(count($buckets) == 0)
     {
       getLogger()->info("Bucket {$this->bucket} does not exist, creating it now");
-      $res = $this->fs->create_bucket($this->bucket, AmazonS3::REGION_US_E1, AmazonS3::ACL_PUBLIC);
+      $res = $this->fs->create_bucket($this->bucket, AmazonS3::REGION_US_E1, AmazonS3::ACL_PRIVATE);
       if(!$res->isOK())
       {
         getLogger()->crit('Could not create S3 bucket: ' . var_export($res, 1));

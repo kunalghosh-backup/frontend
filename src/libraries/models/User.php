@@ -10,7 +10,12 @@
   */
 class User extends BaseModel
 {
-  const mobilePassphraseExpiry = 900; // 15 minutes
+  /**
+    * A user object that caches the value once it's been fetched from the remote datasource.
+    * @access private
+    * @var array
+    */
+  protected $user, $credential;
 
   /*
    * Constructor
@@ -21,11 +26,14 @@ class User extends BaseModel
   }
 
   /**
-    * A user object that caches the value once it's been fetched from the remote datasource.
-    * @access private
-    * @var array
-    */
-  private $user;
+    * Encrypt user password
+    *
+    * @return string
+   */
+  public function encryptPassword($password)
+  {
+    return sha1(sprintf('%s-%s', $password, $this->config->secrets->passwordSalt));
+  }
 
   /**
     * Get an avatar given an email address
@@ -49,25 +57,11 @@ class User extends BaseModel
     */
   public function getEmailAddress()
   {
-    // TODO support oauth calls
-    return $this->session->get('email');
-  }
-
-  /**
-    * Get mobile passphrase key
-    * @return string
-    */
-  public function getMobilePassphrase()
-  {
-    $phrase = getCache()->get($this->getMobilePassphraseKey());
-    if(empty($phrase))
-      return null;
-
-    $parts = explode('-', $phrase);
-    if($parts[1] < time())
-      return null;
-
-    return array('phrase' => $parts[0], 'expiresAt' => $parts[1]);
+    $credential = $this->getCredentialObject();
+    if($credential->isOAuthRequest())
+      return $credential->getEmailFromOAuth();
+    else
+      return $this->session->get('email');
   }
 
   /**
@@ -87,8 +81,31 @@ class User extends BaseModel
       $user[$key] = '';
     $nextIntId = base_convert($user[$key], 31, 10) + 1;
     $nextId = base_convert($nextIntId, 10, 31);
+
+    /*$nextId = $this->getAttribute($type);
+    if($nextId === false)
+      $nextId = '';
+    $nextIntId = base_convert($nextId, 31, 10) + 1;
+    $nextId = base_convert($nextIntId, 10, 31);*/
     $this->update(array($key => $nextId));
     return $nextId;
+  }
+
+  /**
+    * Gets an attribute from the user's entry in the user db
+    * @param string $name The name of the value to retrieve
+    *
+    * @return mixed String on success FALSE on failure
+    */
+  public function getAttribute($name)
+  {
+    $user = $this->getUserRecord();
+    if($user === false)
+      return false;
+
+    if(isset($user[$name]))
+      return $user[$name];
+    return false;
   }
 
   /**
@@ -130,29 +147,24 @@ class User extends BaseModel
 
   public function isLoggedIn()
   {
-    if(getCredential()->isOAuthRequest())
-    {
-      if(!getCredential()->checkRequest())
-      {
-        return false;
-      }
-      return true;
-    }
+    $credential = $this->getCredentialObject();
+    if($credential->isOAuthRequest())
+      return $credential->checkRequest() === true;
     else
-    {
       return $this->session->get('email') != '';
-    }
   }
 
   public function isOwner()
   {
-    if(getCredential()->isOAuthRequest())
+    if(!isset($this->config->user))
+      return false;
+
+    $user = $this->config->user;
+    $credential = $this->getCredentialObject();
+    $loggedInEmail = $this->session->get('email');
+    if($credential->isOAuthRequest())
     {
-      if(!getCredential()->checkRequest())
-      {
-        return false;
-      }
-      return true;
+      return $credential->checkRequest() === true && $credential->getEmailFromOAuth() === $user->email;;
     }
     elseif(!$this->isLoggedIn())
     {
@@ -160,12 +172,21 @@ class User extends BaseModel
     }
     else
     {
-      $user = getConfig()->get('user');
       if($user === null)
         return false;
-      $len = max(strlen($this->session->get('email')), strlen($user->email));
-      return isset($user->email) && strncmp($this->session->get('email'), $user->email, $len) === 0;
+      $len = max(strlen($loggedInEmail), strlen($user->email));
+      $isOwner = isset($user->email) && strncmp(strtolower($loggedInEmail), strtolower($user->email), $len) === 0;
+      if($isOwner)
+        return true;
+
+      if(isset($user->admins))
+      {
+        $admins = (array)explode(',', $user->admins);
+        if(array_search(strtolower($loggedInEmail), array_map('strtolower', $admins)) !== false)
+          return true;
+      }
     }
+    return false;
   }
 
   /**
@@ -189,7 +210,7 @@ class User extends BaseModel
   /**
     * Log a user out.
     *
-    * @return voic
+    * @return void
     */
   public function logout()
   {
@@ -199,29 +220,53 @@ class User extends BaseModel
   /**
     * Set the session email.
     *
-    * @return voic
+    * @return void
     */
   public function setEmail($email)
   {
     $this->session->set('email', $email);
-    $this->session->set('crumb', md5(getConfig()->get('secrets')->secret . time()));
+    $this->session->set('crumb', md5($this->config->secrets->secret . time()));
+    if($this->isOwner())
+      $this->session->set('site', $_SERVER['HTTP_HOST']);
   }
 
   /**
-    * Sets the mobile passphrase key
+    * Update an existing user record.
+    * This method updates an existing user record.
+    * Differs from $this->create on the implementation at the adapter layer.
     *
-    * @return string
+    * The user record has a key of 1 and default attributes specified by $this->getDefaultAttributes().
+    *
+    * @return boolean
     */
-  public function setMobilePassphrase($destroy = false)
+  public function update($params)
   {
-    if($destroy === true)
+    $user = $this->getUserRecord();
+    $params = array_merge($this->getDefaultAttributes(), $user, $params);
+    // encrypt the password if present, else remove it
+    if(isset($params['password']))
     {
-      getCache()->set($this->getMobilePassphraseKey(), '');
-      return null;
+      if(!empty($params['password']))
+        $params['password'] = $this->encryptPassword($params['password']);
+      else
+        unset($params['password']);
     }
-    $phrase = sprintf('%s-%s', substr(md5(uniqid()), 0, 6), time()+self::mobilePassphraseExpiry);
-    getCache()->set($this->getMobilePassphraseKey(), $phrase, self::mobilePassphraseExpiry);
-    return $phrase;
+    // TODO check $params against a whitelist
+    return $this->db->postUser($params);
+  }
+
+  /**
+    * Creates and returns a credential object
+    *
+    * @return object
+    */
+  protected function getCredentialObject()
+  {
+    if(isset($this->credential))
+      return $this->credential;
+
+    $this->credential = new Credential;
+    return $this->credential;
   }
 
   /**
@@ -244,7 +289,7 @@ class User extends BaseModel
     */
   private function getDefaultAttributes()
   {
-    return array('lastPhotoId' => '', 'lastActionId' => '', 'lastGroupId' => '', 'lastWebhookId' => '');
+    return array('lastPhotoId' => '', 'lastActionId' => '', 'lastGroupId' => '', 'lastWebhookId' => '', 'password' => '');
   }
 
   /**
@@ -255,21 +300,5 @@ class User extends BaseModel
   private function getMobilePassphraseKey()
   {
     return sprintf('%s-%s', 'mobile.passphrase.key', getenv('HTTP_HOST'));
-  }
-
-  /**
-    * Update an existing user record.
-    * This method updates an existing user record.
-    * Differs from $this->create on the implementation at the adapter layer.
-    *
-    * The user record has a key of 1 and default attributes specified by $this->getDefaultAttributes().
-    *
-    * @return boolean
-    */
-  private function update($params)
-  {
-    $user = $this->getUserRecord();
-    $params = array_merge($this->getDefaultAttributes(), $user, $params);
-    return $this->db->postUser($params);
   }
 }

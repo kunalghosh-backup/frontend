@@ -8,6 +8,7 @@ if(isset($_GET['__route__']) && strstr($_GET['__route__'], '.json'))
 $basePath = dirname(dirname(__FILE__));
 $epiPath = "{$basePath}/libraries/external/epi";
 require "{$epiPath}/Epi.php";
+require "{$basePath}/libraries/compatability.php";
 require "{$basePath}/libraries/models/UserConfig.php";
 
 Epi::setSetting('exceptions', true);
@@ -16,12 +17,35 @@ Epi::setPath('config', "{$basePath}/configs");
 Epi::setPath('view', '');
 Epi::init('api','cache','config','curl','form','logger','route','session','template','database');
 
-// loads configs and dependencies
-$hasConfig = getUserConfig()->load();
+$routeObj = getRoute();
+$apiObj = getApi();
 
-EpiCache::employ(getConfig()->get('epi')->cache);
-EpiSession::employ(getConfig()->get('epi')->session);
+// loads configs and dependencies
+$userConfigObj = new UserConfig;
+$hasConfig = $userConfigObj->load();
+$configObj = getConfig();
+
+// set log level
+$levels = (array)explode(',', $configObj->get('epi')->logLevels);
+call_user_func_array('EpiLogger::employ', $levels);
+
+// initialize session
+EpiCache::employ($configObj->get('epi')->cache);
+$sessionParams = array($configObj->get('epi')->session);
+if($configObj->get('epiSessionParams')) {
+  $sessionParams = array_merge($sessionParams, (array)$configObj->get('epiSessionParams'));
+  // for TLDs we need to override the cookie domain if specified
+  if(isset($sessionParams['domain']) && stristr($_SERVER['HTTP_HOST'], $sessionParams['domain']) === false)
+    $sessionParams['domain'] = $_SERVER['HTTP_HOST'];
+
+  $sessionParams = array_values($sessionParams); // reset keys
+}
+EpiSession::employ($sessionParams);
 getSession();
+
+// load theme after everything is initialized
+// this initializes user which extends BaseModel and gets session, config and cache objects
+$userConfigObj->loadTheme();
 
 // determine if this is a login endpoint
 $loginEndpoint = $assetEndpoint = false;
@@ -44,11 +68,12 @@ if($hasConfig && !$runSetup)
   $runUpgrade = false;
   if(!getUpgrade()->isCurrent())
     $runUpgrade = true;
-  require getConfig()->get('paths')->libraries . '/routes.php';
+  require $configObj->get('paths')->libraries . '/routes.php';
+
+  Request::setApiVersion();
 
   // initializes plugins
-  getPlugin();
-  getPlugin()->invoke('onLoad');
+  getPlugin()->load();
 }
 else
 {
@@ -67,18 +92,21 @@ else
   $paths->models = "{$baseDir}/libraries/models";
   $paths->templates = "{$baseDir}/templates";
   $paths->themes = "{$baseDir}/html/assets/themes";
-  getConfig()->set('paths', $paths);
+  $configObj->set('paths', $paths);
 
   if(!$hasConfig)
-    require getConfig()->get('paths')->libraries . '/dependencies.php';
+    require $configObj->get('paths')->libraries . '/dependencies.php';
 
-  require getConfig()->get('paths')->libraries . '/routes-setup.php';
-  require getConfig()->get('paths')->libraries . '/routes-error.php';
-  require getConfig()->get('paths')->controllers . '/SetupController.php';
-  getConfig()->load(sprintf('%s/html/assets/themes/%s/config/settings.ini', dirname(dirname(__FILE__)), getTheme()->getThemeName()));
+  require $configObj->get('paths')->libraries . '/routes-setup.php';
+  require $configObj->get('paths')->libraries . '/routes-error.php';
+  require $configObj->get('paths')->controllers . '/SetupController.php';
+  $configObj->loadString(file_get_contents(sprintf('%s/html/assets/themes/%s/config/settings.ini', dirname(dirname(__FILE__)), getTheme()->getThemeName())));
 
   // Before we run the setup in edit mode, we need to validate ownership
   $userObj = new User;
   if(isset($_GET['edit']) && !$userObj->isOwner())
-    getRoute()->run('/error/403');
+  {
+    $routeObj->run('/error/403');
+    die();
+  }
 }

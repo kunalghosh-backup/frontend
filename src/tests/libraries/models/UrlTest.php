@@ -1,9 +1,4 @@
 <?php
-$baseDir = dirname(dirname(dirname(dirname(__FILE__))));
-require_once sprintf('%s/tests/helpers/init.php', $baseDir);
-require_once sprintf('%s/libraries/models/Utility.php', $baseDir);
-require_once sprintf('%s/libraries/models/Url.php', $baseDir);
-
 class UrlTest extends PHPUnit_Framework_TestCase
 {
   public function setUp()
@@ -104,14 +99,29 @@ class UrlTest extends PHPUnit_Framework_TestCase
   public function testPhotoView()
   {
     $url = $this->url->photoView($this->id, null, false);
-    $this->assertEquals("/photo/{$this->id}/view", $url, 'Urls do not match');
+    $this->assertEquals("/p/{$this->id}", $url, 'Urls do not match');
     $this->url->photoView($this->id);
     $url = ob_get_contents();
     ob_clean();
-    $this->assertEquals("/photo/{$this->id}/view", $url, 'Urls do not match');
+    $this->assertEquals("/p/{$this->id}", $url, 'Urls do not match');
     $this->url->photoView($this->id, null, true);
     $url = ob_get_contents();
     ob_clean();
-    $this->assertEquals("/photo/{$this->id}/view", $url, 'Urls do not match');
+    $this->assertEquals("/p/{$this->id}", $url, 'Urls do not match');
+  }
+
+  public function testPhotoViewShort()
+  {
+    $_SERVER['REDIRECT_URL'] = "/p/{$this->id}";
+    $url = $this->url->photoView($this->id, null, false);
+    $this->assertEquals("/p/{$this->id}", $url, 'Urls do not match');
+    $this->url->photoView($this->id);
+    $url = ob_get_contents();
+    ob_clean();
+    $this->assertEquals("/p/{$this->id}", $url, 'Urls do not match');
+    $this->url->photoView($this->id, null, true);
+    $url = ob_get_contents();
+    ob_clean();
+    $this->assertEquals("/p/{$this->id}", $url, 'Urls do not match');
   }
 }

@@ -26,20 +26,27 @@
         <li class="date"><?php $this->utility->dateLong($photo['dateTaken']); ?></li>
         <li class="heart"><?php echo count($photo['actions']); ?> favorites &amp; comments - <a href="#comments" class="action-jump-click">see all</a></li>
         <li class="tags"><?php $this->url->tagsAsLinks($photo['tags']); ?></li>
-        <?php if(isset($photo['license'])) { ?>
-          <li class="license"><?php $this->utility->licenseLong($photo['license']); ?></li>
+        <?php if(isset($photo['pathOriginal'])) { ?>
+          <li class="original"><span></span><a href="<?php $this->utility->safe($photo['pathOriginal']); ?>">Download original</a></li>
+        <?php } ?>
+        <?php if($this->utility->licenseLink($photo['license'], false)) { ?>
+          <a rel="license" href="<?php $this->utility->licenseLink($photo['license']); ?>">
+            <?php $this->utility->licenseLong($photo['license']); ?>
+          </a>
+        <?php } else { ?>
+          <?php $this->utility->licenseLong($photo['license']); ?>
         <?php } ?>
         <?php if(!empty($photo['latitude']) && !empty($photo['latitude'])) { ?>
           <li class="location">
-            <?php $this->utility->safe($photo['latitude']); ?>, <?php $this->utility->safe($photo['longitude']); ?>
-            <img src="<?php $this->utility->staticMapUrl($photo['latitude'], $photo['longitude'], 5, '225x150'); ?>" class="map">
+            <a href="<?php $this->utility->mapLinkUrl($photo['latitude'], $photo['longitude'], 5); ?>"><?php $this->utility->safe($photo['latitude']); ?>, <?php $this->utility->safe($photo['longitude']); ?>
+            <img src="<?php $this->utility->staticMapUrl($photo['latitude'], $photo['longitude'], 5, '225x150'); ?>" class="map"></a>
           </li>
         <?php } ?>
         <li class="exif">
           <ul>
             <?php foreach(array('exifCameraMake' => 'Camera make: %s',
                                         'exifCameraModel' => 'Camera model: %s',
-                                        'exifFNumber' => 'Av: f/%1.0F',
+                                        'exifFNumber' => 'Av: f/%1.1F',
                                         'exifExposureTime' => 'Tv: %s',
                                         'exifISOSpeed' => 'ISO: %d',
                                         'exifFocalLength' => 'Focal Length: %1.0fmm') as $key => $value) { ?>
@@ -50,9 +57,6 @@
           </ul>
         </li>
       </ul>
-      <?php if($this->user->isOwner()) { ?>
-        <a href="<?php $this->url->photoEdit($photo['id']); ?>" class="button photo-edit-click">Edit this photo</a>
-      <?php } ?>
     </div>
   </div>
 </div>
@@ -90,7 +94,7 @@
     <?php if($this->user->isLoggedIn()) { ?>
       <button type="submit">Leave a comment</button>
     <?php } else { ?>
-      <button type="button" class="login-click">Sign in to comment</button>
+      <button type="button" class="login-click browserid">Sign in to comment</button>
     <?php } ?>
     </div>
   </form>
@@ -99,7 +103,7 @@
     <form method="post" action="<?php $this->url->actionCreate($photo['id'], 'photo'); ?>">
       <input type="hidden" name="value" value="1">
       <input type="hidden" name="type" value="favorite">
-      <input type="hidden" name="targetUrl" value="<?php sprintf('http://%s%s', $_SERVER['HTTP_HOST'], $_SERVER['REQUEST_URI']); ?>">
+      <input type="hidden" name="targetUrl" value="<?php printf('http://%s%s', $_SERVER['HTTP_HOST'], $_SERVER['REQUEST_URI']); ?>">
       <input type="hidden" name="crumb" value="<?php echo $crumb; ?>">
       <br>
       <button type="submit">Favorite</button>

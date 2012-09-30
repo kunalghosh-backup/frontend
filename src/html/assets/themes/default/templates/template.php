@@ -30,12 +30,12 @@
     <link rel="stylesheet" href="<?php $this->theme->asset('stylesheet', 'settings.css'); ?>">
     <link rel="stylesheet" href="<?php $this->theme->asset('stylesheet', 'setup.css'); ?>">
     <link rel="stylesheet" href="<?php $this->theme->asset('stylesheet', 'message-box.css'); ?>">
+    <link rel="stylesheet" href="/assets/stylesheets/font-awesome-2.css">
     <link rel="stylesheet" href="/assets/stylesheets/upload.css">
-    <?php $this->plugin->invoke('onHead', array('page' => $page)); ?>
+    <?php $this->plugin->invoke('renderHead'); ?>
 </head>
 
 <body class="<?php echo $page; ?>">
-  <?php $this->plugin->invoke('onBodyBegin', array('page' => $page)); ?>
   <div id="container">
     <header>
       <?php $this->theme->display('partials/header.php'); ?>
@@ -96,6 +96,6 @@
       }
     });
   </script>
-  <?php $this->plugin->invoke('onBodyEnd', array('page' => $page)); ?>
+  <?php $this->plugin->invoke('renderFooter'); ?>
 </body>
 </html>

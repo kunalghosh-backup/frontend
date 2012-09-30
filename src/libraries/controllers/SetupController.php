@@ -9,6 +9,9 @@
   */
 class SetupController extends BaseController
 {
+
+  private $actualTheme;
+
   /**
     * Call the parent constructor
     *
@@ -17,7 +20,8 @@ class SetupController extends BaseController
   public function __construct()
   {
     parent::__construct();
-    $this->theme->setTheme('beisel');
+    $this->actualTheme = $this->theme->getThemeName();
+    $this->theme->setTheme(); // defaults
     $this->user = new User;
   }
   
@@ -51,7 +55,7 @@ class SetupController extends BaseController
       $database = getConfig()->get('systems')->database;
       $filesystem = getConfig()->get('systems')->fileSystem;
     }
-    $theme = $this->theme->getThemeName();
+    $theme = $this->actualTheme;
     $themes = $this->theme->getThemes();
 
     $errors = $this->verifyRequirements($imageLibs);
@@ -73,7 +77,7 @@ class SetupController extends BaseController
 
     $template = sprintf('%s/setup.php', getConfig()->get('paths')->templates);
     $body = $this->template->get($template, array('filesystem' => $filesystem, 'database' => $database, 'themes' => $themes, 'theme' => $theme,
-      'imageLibs' => $imageLibs, 'imageLibrary' => $imageLibrary, 'appId' => $appId, 'step' => $step, 'email' => $email, 'qs' => $qs, 'errors' => $errors));
+      'imageLibs' => $imageLibs, 'imageLibrary' => $imageLibrary, 'appId' => $appId, 'step' => $step, 'email' => $email, 'password' => '', 'qs' => $qs, 'errors' => $errors));
     $this->theme->display('template.php', array('body' => $body, 'page' => 'setup'));
   }
 
@@ -102,7 +106,7 @@ class SetupController extends BaseController
     if(isset($_GET['edit']))
       $qs = '?edit';
 
-    $template = sprintf('%s/setupDropbox.php', getConfig()->get('paths')->templates);
+    $template = sprintf('%s/setup-dropbox.php', getConfig()->get('paths')->templates);
     $body = $this->template->get($template, array('dropboxKey' => $dropboxKey, 'dropboxSecret' => $dropboxSecret, 'dropboxFolder' => $dropboxFolder, 'qs' => $qs));
     $this->theme->display('template.php', array('body' => $body, 'page' => 'setup'));
   }
@@ -182,6 +186,7 @@ class SetupController extends BaseController
     $step = 1;
     $appId = isset($_POST['appId']) ? $_POST['appId'] : '';
     $email = isset($_POST['email']) ? $_POST['email'] : '';
+    $password = isset($_POST['password']) ? $_POST['password'] : '';
     $theme = isset($_POST['theme']) ? $_POST['theme'] : '';
     $input = array(
       array('Email', $email, 'required')
@@ -193,6 +198,7 @@ class SetupController extends BaseController
       getSession()->set('step', 2);
       getSession()->set('appId', $appId);
       getSession()->set('ownerEmail', $email);
+      getSession()->set('password', $password);
       getSession()->set('theme', $theme);
 
       $qs = '';
@@ -203,7 +209,7 @@ class SetupController extends BaseController
     }
 
     $template = sprintf('%s/setup.php', getConfig()->get('paths')->templates);
-    $body = $this->template->get($template, array('email' => $email, 'appId' => $appId, 'step' => $step, 'errors' => $errors));
+    $body = $this->template->get($template, array('email' => $email, 'password' => $password, 'appId' => $appId, 'step' => $step, 'errors' => $errors));
     $this->theme->display('template.php', array('body' => $body, 'page' => 'setup'));
   }
 
@@ -288,6 +294,7 @@ class SetupController extends BaseController
     extract($this->getDefaultConfigParams());
     $secret = $this->getSecret();
     $step = 3;
+    $password = getSession()->get('password');
     $appId = getSession()->get('appId');
     $database = getSession()->get('database');
     $filesystem = getSession()->get('filesystem');
@@ -365,7 +372,7 @@ class SetupController extends BaseController
 
     $template = sprintf('%s/setup.php', getConfig()->get('paths')->templates);
     // copied to/from setup3Post()
-    $body = $this->template->get($template, array('step' => $step, 'themes' => $themes, 'usesAws' => $usesAws, 'usesMySql' => $usesMySql,
+    $body = $this->template->get($template, array('step' => $step, 'password' => $password,'themes' => $themes, 'usesAws' => $usesAws, 'usesMySql' => $usesMySql,
       'database' => $database, 'filesystem' => $filesystem, 'usesLocalFs' => $usesLocalFs, 'usesS3' => $usesS3,
       'usesSimpleDb' => $usesSimpleDb, 'awsKey' => $awsKey, 'awsSecret' => $awsSecret, 's3Bucket' => $s3Bucket,
       'simpleDbDomain' => $simpleDbDomain, 'mySqlHost' => $mySqlHost, 'mySqlUser' => $mySqlUser, 'mySqlDb' => $mySqlDb,
@@ -391,6 +398,7 @@ class SetupController extends BaseController
     $database = getSession()->get('database');
     $filesystem = getSession()->get('filesystem');
     $appId = getSession()->get('appId');
+    $password = getSession()->get('password');
     $usesAws = (getSession()->get('database') == 'SimpleDb' || stristr(getSession()->get('fileSystem'), 'S3') !== false) ? true : false;
     $usesMySql = (getSession()->get('database') == 'MySql') ? true : false;
     $usesSimpleDb = (getSession()->get('database') == 'SimpleDb') ? true : false;
@@ -439,7 +447,7 @@ class SetupController extends BaseController
       $input = array(
         array('MySQL Host', $mySqlHost, 'required'),
         array('MySQL Username', $mySqlUser, 'required'),
-        array('MySQL Password', $mySqlPassword, 'required'),
+        array('MySQL Password', $mySqlPassword),
         array('MySQL Database', $mySqlDb, 'required')
       );
       $mySqlErrors = getForm()->hasErrors($input);
@@ -557,7 +565,7 @@ class SetupController extends BaseController
       $serverUser = exec("whoami");
       if(!$fsObj->initialize($isEditMode))
       {
-        if($usesAws)
+        if($usesS3)
           $fsErrors[] = 'We were unable to initialize your S3 bucket.<ul><li>Make sure you\'re <a href="http://aws.amazon.com/s3/">signed up for AWS S3</a>.</li><li>Double check your AWS credentials.</li><li>S3 bucket names are globally unique, make sure yours isn\'t already in use by someone else.</li><li>S3 bucket names can\'t have certain special characters. Try using just alpha-numeric characters and periods.</li></ul>';
         else if($usesLocalFs)
           $fsErrors[] = "We were unable to set up your local file system using <em>{$fsObj->getRoot()}</em>. Make sure that the following user has proper permissions ({$serverUser}).";
@@ -566,7 +574,7 @@ class SetupController extends BaseController
       }
       if(!$dbObj->initialize($isEditMode))
       {
-        if($usesAws)
+        if($usesSimpleDb)
           $dbErrors[] = 'We were unable to initialize your SimpleDb domains.<ul><li>Make sure you\'re <a href="http://aws.amazon.com/simpledb/">signed up for AWS SimpleDb</a>.</li><li>Double check your AWS credentials.</li><li>SimpleDb domains cannot contain special characters such as periods.</li><li>Sometimes the SimpleDb create domain API is unstable. Try again later or check the error log if you have access to it.</li></ul>';
         else if($usesMySql)
           $dbErrors[] = 'We were unable to initialize your account in MySql. <ul><li>Please verify that the host, username and password are correct and have proper permissions to create a database.</li><li>Make sure your email address is not already in use.</li></ul>';
@@ -574,6 +582,23 @@ class SetupController extends BaseController
           $dbErrors[] = 'An unknown error occurred while setting up your database. Check your error logsto see if there\'s more information about the error.';
 
         $dbErrors = array_merge($dbErrors, $dbObj->errors());
+      }
+      try {
+        if(getConfig()->get('site')->allowOpenPhotoLogin == 1) {
+          if($isEditMode)
+            $dbObj->postUser(array('password' => sha1(sprintf('%s-%s', $password, getConfig()->get('secrets')->passwordSalt))));
+          else
+            $dbObj->putUser(array('password' => sha1(sprintf('%s-%s', $password, getConfig()->get('secrets')->passwordSalt))));
+        }
+        else {
+          if($isEditMode)
+            $dbObj->postUser(array('password' => ''));
+          else
+            $dbObj->putUser(array('password' => ''));
+	}
+      }
+      catch(Exception $e) {
+	getLogger()->warn($e->getMessage());
       }
 
       if($fsErrors === false && $dbErrors === false)
@@ -620,7 +645,7 @@ class SetupController extends BaseController
 
     $template = sprintf('%s/setup.php', getConfig()->get('paths')->templates);
     // copied to/from setup3()
-    $body = $this->template->get($template, array('step' => $step, 'themes' => $themes, 'usesAws' => $usesAws, 'usesMySql' => $usesMySql,
+    $body = $this->template->get($template, array('step' => $step, 'password' => $password,'themes' => $themes, 'usesAws' => $usesAws, 'usesMySql' => $usesMySql,
       'database' => $database, 'filesystem' => $filesystem, 'usesLocalFs' => $usesLocalFs, 'usesS3' => $usesS3,
       'usesSimpleDb' => $usesSimpleDb, 'awsKey' => $awsKey, 'awsSecret' => $awsSecret, 's3Bucket' => $s3Bucket,
       'simpleDbDomain' => $simpleDbDomain, 'mySqlHost' => $mySqlHost, 'mySqlUser' => $mySqlUser, 'mySqlDb' => $mySqlDb,
@@ -643,7 +668,7 @@ class SetupController extends BaseController
 
   public function getSecret()
   {
-    if(getConfig()->get('secrets') !== null)
+    if(getConfig()->get('secrets') !== null && isset(getConfig()->get('secrets')->secret))
     {
       $secret = getConfig()->get('secrets')->secret;
       getSession()->set('secret', $secret);
@@ -680,13 +705,16 @@ class SetupController extends BaseController
     $generatedDir = "{$configDir}/configs";
     $assetsDir = $this->utility->getBaseDir() . '/html/assets/cache';
 
-    if(file_exists($generatedDir) && is_writable($generatedDir) && file_exists($assetsDir) && is_writable($assetsDir) && !empty($imageLibs))
-      # No errors, return empty array
+    // No errors, return empty array
+    if(function_exists('exif_read_data') && file_exists($generatedDir) && is_writable($generatedDir) && file_exists($assetsDir) && is_writable($assetsDir) && !empty($imageLibs))
       return $errors;
 
     $user = exec("whoami");
     if(empty($user))
       $user = 'Apache user';
+
+    if(!function_exists('exif_read_data'))
+      $errors[] = 'We could not find PHP\'s exif functions. Please install php5-exif.';
 
     if(!is_writable($configDir))
       $errors[] = "Insufficient privileges to complete setup.<ul><li>Make sure the user <em>{$user}</em> can write to <em>{$configDir}</em>.</li></ul>";
@@ -776,7 +804,7 @@ class SetupController extends BaseController
     $session = getSession()->getAll();
     foreach($session as $key => $val)
     {
-      if($key != 'email')
+      if($key != 'email' && $key != 'password')
         $pReplace["{{$key}}"] = $val;
 
       getLogger()->info(sprintf('Storing %s as %s', $key, $val));
@@ -789,7 +817,7 @@ class SetupController extends BaseController
       file_get_contents("{$configDir}/template.ini")
     );
 
-    $iniWritten = file_put_contents(sprintf("%s/userdata/configs/%s.ini", $baseDir, getenv('HTTP_HOST')), $generatedIni);
+    $iniWritten = getConfig()->write(sprintf("%s/userdata/configs/%s.ini", $baseDir, getenv('HTTP_HOST')), $generatedIni);
     if(!$iniWritten)
       return false;
 

@@ -1,9 +1,4 @@
 <?php
-$baseDir = dirname(dirname(dirname(dirname(__FILE__))));
-require_once sprintf('%s/tests/helpers/init.php', $baseDir);
-require_once sprintf('%s/libraries/models/Utility.php', $baseDir);
-require_once sprintf('%s/libraries/models/Url.php', $baseDir);
-
 class EpiRoute
 {
   const httpGet = 'GET';
@@ -59,6 +54,10 @@ class UtilityTest extends PHPUnit_Framework_TestCase
 
   public function testDecrypt()
   {
+    if (!extension_loaded('mcrypt')) {
+      $this->markTestSkipped("Test requires ext/mcrypt");
+      return;
+    }
     $res = $this->utility->decrypt('string', 'secret', 'salt');
     $this->assertEquals('lOHFbOH4AD+cpcRh1FcDte9DAapMDzqIHrwFz5DvxD4=', base64_encode($res), 'decrypted string is not correct');
   }
@@ -80,6 +79,10 @@ class UtilityTest extends PHPUnit_Framework_TestCase
 
   public function testEncrypt()
   {
+    if (!extension_loaded('mcrypt')) {
+      $this->markTestSkipped("Test requires ext/mcrypt");
+      return;
+    }
     $res = $this->utility->encrypt('string', 'secret', 'salt');
     $this->assertEquals('b2ljK3AzRVE3Tk56N0FNd3dlUFRLMWRHaHh3QnVReG8wdFRHdktYczRFWT0=', base64_encode($res), 'encrypted string is not correct');
   }
@@ -198,6 +201,15 @@ RES;
     $this->assertEquals('Does not exist', $res, 'licenseLong should return string passed in of match is not found');
   }
 
+  public function testLicenseLink()
+  {
+    $res = $this->utility->licenseLink('CC BY', false);
+    $this->assertEquals('http://creativecommons.org/licenses/by/3.0', $res, 'CC BY license not properly retrieved');
+
+    $res = $this->utility->licenseLink('Does not exist', false);
+    $this->assertEquals('', $res, 'licenseLink should return string passed in of match is not found');
+  }
+
   public function testPermissionAsText()
   {
     $res = $this->utility->permissionAsText(0, false);
@@ -212,6 +224,9 @@ RES;
 
   public function testPlural()
   {
+    $res = $this->utility->plural(0, 'word', false);
+    $this->assertEquals('words', $res, 'plural for word with 0 incorrect');
+
     $res = $this->utility->plural(1, 'word', false);
     $this->assertEquals('word', $res, 'plural for word with 1 incorrect');
 

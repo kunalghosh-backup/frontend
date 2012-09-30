@@ -9,15 +9,31 @@ class Credential extends BaseModel
   const statusActive = '1';
 
   const nonceCacheKey = 'oauthTimestamps';
-  private $consumer, $oauthException, $oauthParams, $provider;
+  public $oauthException, $oauthParams, $provider, $sendHeadersOnError = true;
+  private static $consumer = null, $requestStatus = null;
 
-  public function __construct()
+  /**
+    * Constructor
+    */
+  public function __construct($params = null)
   {
     parent::__construct();
+    if(isset($params['utility']))
+      $this->utility = $params['utility'];
+    else
+      $this->utility = new Utility;
+
     if(class_exists('OAuthProvider'))
       $this->provider = new OAuthProvider($this->getOAuthParameters());
   }
 
+  /**
+    * Add an oauth credential for this user
+    *
+    * @param string $name Human readable name for this credential
+    * @param array $params Array of permissions
+    * @return mixed Credential ID on success, false on failure
+    */
   public function add($name, $permissions = array('read'))
   {
     if(!class_exists('OAuthProvider'))
@@ -37,7 +53,8 @@ class Credential extends BaseModel
       'permissions' => $permissions,
       'verifier' => substr($randomConsumer, 30, 10),
       'type' => self::typeUnauthorizedRequest,
-      'status' => self::statusActive
+      'status' => self::statusActive,
+	  'dateCreated' => time()
     );
     $res = $this->db->putCredential($id, $params);
     if($res)
@@ -46,6 +63,14 @@ class Credential extends BaseModel
     return false;
   }
 
+  /**
+    * Convert an existing token from one type to another.
+    *  Typically used to convert from an authorized request token to an access token
+    *
+    * @param string $name Human readable name for this credential
+    * @param array $params Array of permissions
+    * @return mixed Credential ID on success, false on failure
+    */
   public function convertToken($id, $toTokenType)
   {
     if(!class_exists('OAuthProvider'))
@@ -60,6 +85,9 @@ class Credential extends BaseModel
 
   public function checkRequest()
   {
+    if(self::$requestStatus !== null)
+      return self::$requestStatus;
+
     if(!class_exists('OAuthProvider'))
     {
       $this->logger->warn('No OAuthProvider class found on this system');
@@ -74,14 +102,16 @@ class Credential extends BaseModel
       $this->provider->setParam('__route__', null);
       $this->provider->setRequestTokenPath('/v1/oauth/token/request'); // No token needed for this end point
       $this->provider->checkOAuthRequest();
-      return true;
+      self::$requestStatus = true;
     }
     catch(OAuthException $e)
     {
       $this->oauthException = $e;
-      $this->logger->crit(OAuthProvider::reportProblem($e));
-      return false;
+      $this->logger->crit(OAuthProvider::reportProblem($e, $this->sendHeadersOnError));
+      self::$requestStatus = false;
     }
+
+    return self::$requestStatus;
   }
 
   public function checkConsumer($provider)
@@ -118,14 +148,18 @@ class Credential extends BaseModel
       return false;
     }
 
-    $cache = getConfig()->get(self::nonceCacheKey);
-    if(!$cache)
+    $cache = $this->cache->get(self::nonceCacheKey);
+    if(!$cache || !is_array($cache))
       $cache = array();
+
     list($lastTimestamp, $nonces) = each($cache);
-    if($provider->timestamp > (time()+300) || $provider->timestamp < $lastTimestamp)
+    // change logic to check for request order to include a 5 minute grace period
+    // see #628 and #738 for details
+    if($provider->timestamp > (time()+300) || $provider->timestamp < ($lastTimestamp-300))
     {
       // timestamp can't be more then 30 seconds into the future
       // or prior to the last timestamp
+      $this->logger->warn(sprintf('The provided timestamp of %s did not validate against the current timestamp of %s and lastTimestamp of %s', $provider->timestamp, time(), $lastTimestamp));
       return OAUTH_BAD_TIMESTAMP;
     }
     elseif(isset($cache[$provider->timestamp]))
@@ -177,10 +211,18 @@ class Credential extends BaseModel
 
   public function getConsumer($consumerKey)
   {
-    if(!$this->consumer)
-      $this->consumer = $this->db->getCredential($consumerKey);
+    if(!self::$consumer)
+      self::$consumer = $this->db->getCredential($consumerKey);
 
-    return $this->consumer;
+    return self::$consumer;
+  }
+
+  public function getEmailFromOAuth()
+  {
+    if(!self::$consumer)
+      return false;
+
+    return self::$consumer['owner'];
   }
 
   public function getErrorAsString()
@@ -193,9 +235,8 @@ class Credential extends BaseModel
     if($this->oauthParams)
       return $this->oauthParams;
 
-    $utilityObj = new Utility;
     $this->oauthParams = array();
-    $headers = $utilityObj->getAllHeaders();
+    $headers = $this->utility->getAllHeaders();
     foreach($headers as $name => $header)
     {
       if(stripos($name, 'authorization') === 0)
@@ -231,13 +272,10 @@ class Credential extends BaseModel
     // oauth_token and oauth_callback can be passed in for authenticated endpoints to obtain a credential
     return (count($params) > 2);
   }
-}
 
-function getCredential()
-{
-  static $credential;
-  if(!$credential)
-    $credential = new Credential;
-
-  return $credential;
+  public function reset()
+  {
+    self::$consumer = null;
+    self::$requestStatus = null;
+  }
 }

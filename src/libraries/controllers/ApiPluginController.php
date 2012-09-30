@@ -22,10 +22,16 @@ class ApiPluginController extends ApiBaseController
     $pluginObj = getPlugin();
     $pluginsAll = $pluginObj->getAll();
     $pluginsActive = $pluginObj->getActive();
-    $plugins = array();
+    $pluginWhitelist = getConfig()->get('site')->pluginWhitelist;
+    if($pluginWhitelist)
+      $pluginWhitelist = (array)explode(',', $pluginWhitelist);
 
+    $plugins = array();
     foreach($pluginsAll as $p)
-      $plugins[] = array('name' => $p, 'conf' => $pluginObj->loadConf($p), 'status' => in_array($p, $pluginsActive) ? 'active' : 'inactive');
+    {
+      if(!$pluginWhitelist || in_array($p, $pluginWhitelist))
+        $plugins[] = array('name' => $p, 'conf' => $pluginObj->loadConf($p), 'status' => in_array($p, $pluginsActive) ? 'active' : 'inactive');
+    }
 
     return $this->success('Plugins', $plugins);
   }
@@ -55,6 +61,7 @@ class ApiPluginController extends ApiBaseController
 
   public function updateStatus($plugin, $status)
   {
+    getAuthentication()->requireAuthentication();
     $siteConfig = getUserConfig()->getSiteSettings();
     $plugins = (array)explode(',', $siteConfig['plugins']['activePlugins']);
     switch($status)
@@ -80,5 +87,25 @@ class ApiPluginController extends ApiBaseController
       return $this->error('Could not change status of plugin', false);
     else
       return $this->success('Plugin status changed', true);
+  }
+
+  public function view($plugin)
+  {
+    getAuthentication()->requireAuthentication();
+    getAuthentication()->requireCrumb();
+    $siteConfig = getUserConfig()->getSiteSettings();
+    $plugins = (array)explode(',', $siteConfig['plugins']['activePlugins']);
+    if(!in_array($plugin, $plugins))
+    {
+      $this->logger->warn(sprintf('Tried to call /plugin/%s/view.json on an inactive or non existant plugin', $plugin));
+      return $this->error('Could not load plugin', false);
+    }
+
+    $pluginObj = getPlugin();
+    $conf = $pluginObj->loadConf($plugin);
+
+    $bodyTemplate = sprintf('%s/plugin-form.php', $this->config->paths->templates);
+    $body = $this->template->get($bodyTemplate, array('plugin' => $plugin, 'conf' => $conf, 'crumb' => $this->session->get('crumb')));
+    return $this->success(sprintf('Form for %s plugin', $plugin), array('markup' => $body));
   }
 }

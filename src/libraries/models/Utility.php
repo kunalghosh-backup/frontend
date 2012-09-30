@@ -69,9 +69,27 @@ class Utility
     return base64_encode($encryptedString);
   }
 
+  public function getAbsoluteUrl($path = '/', $write = true)
+  {
+    return $this->returnValue(sprintf('%s://%s%s', $this->getProtocol(false), $this->getHost(false), $path), $write);
+  }
+
   public function getBaseDir()
   {
     return dirname(dirname(dirname(__FILE__)));
+  }
+
+  public function getConfigFile()
+  {
+    $configFile = sprintf('%s/userdata/configs/%s.ini', $this->getBaseDir(), $this->getHost());
+    if(!getConfig()->exists($configFile))
+      return false;
+    return $configFile;
+  }
+
+  public function getHost()
+  {
+    return $_SERVER['HTTP_HOST'];
   }
 
   public function getLicenses($selected = null)
@@ -80,12 +98,12 @@ class Utility
     {
       $this->licenses = array(
         '' => array('name' => 'All Rights Reserved', 'description' => ''),
-        'CC BY' => array('name' => 'Attribution', 'description' => ''),
-        'CC BY-SA' => array('name' => 'Attribution-ShareAlike', 'description' => ''),
-        'CC BY-ND' => array('name' => 'Attribution-NoDerivs', 'description' => ''),
-        'CC BY-NC' => array('name' => 'Attribution-NonCommercial', 'description' => ''),
-        'CC BY-NC-SA' => array('name' => 'Attribution-NonCommercial-ShareAlike', 'description' => ''),
-        'CC BY-NC-ND' => array('name' => 'Attribution-NonCommercial-NoDerivs', 'description' => '')
+        'CC BY' => array('name' => 'Attribution', 'description' => '', 'link' => 'http://creativecommons.org/licenses/by/3.0'),
+        'CC BY-SA' => array('name' => 'Attribution-ShareAlike', 'description' => '', 'link' => 'http://creativecommons.org/licenses/by-sa/3.0'),
+        'CC BY-ND' => array('name' => 'Attribution-NoDerivs', 'description' => '', 'link' => 'http://creativecommons.org/licenses/by-nd/3.0'),
+        'CC BY-NC' => array('name' => 'Attribution-NonCommercial', 'description' => '', 'link' => 'http://creativecommons.org/licenses/by-nc/3.0' ),
+        'CC BY-NC-SA' => array('name' => 'Attribution-NonCommercial-ShareAlike', 'description' => '', 'link' => 'http://creativecommons.org/licenses/by-nc-sa/3.0'),
+        'CC BY-NC-ND' => array('name' => 'Attribution-NonCommercial-NoDerivs', 'description' => '', 'link' => 'http://creativecommons.org/licenses/by-nc-nd/3.0')
       );
     }
 
@@ -185,6 +203,11 @@ class Utility
     $route = $_GET['__route__'];
     switch($label)
     {
+      case 'album':
+      case 'albums':
+        if(!empty($route) && preg_match('#^/album#', $route))
+          return true;
+        break;
       case 'home':
         if(preg_match('#^/$#', $route))
           return true;
@@ -206,6 +229,11 @@ class Utility
           return true;
         return false;
         break;
+      case 'manage':
+        if(!empty($route) && preg_match('#^/manage#', $route))
+          return true;
+        return false;
+        break;
     }
   }
 
@@ -217,6 +245,15 @@ class Utility
     $detect = new Mobile_Detect();
     $this->isMobile = $detect->isMobile();
     return $this->isMobile;
+  }
+
+
+  public function isValidMimeType($filename)
+  {
+    $type = get_mime_type($filename);
+    if(preg_match('/jpg|jpeg|gif|png$/', $type))
+      return true;
+    return false;
   }
 
   public function getTemplate($template)
@@ -242,6 +279,26 @@ class Utility
     return $this->returnValue($license, $write);
   }
 
+  public function licenseName($key, $write = true)
+  {
+    $licenses = $this->getLicenses();
+    // default it to the key, if the key doesn't exist then assume it's custom
+    $license = $key;
+    if(isset($licenses[$key]))
+      $license = $licenses[$key]['name'];
+
+    return $this->returnValue($license, $write);
+  }
+
+  public function licenseLink($key, $write = true)
+  {
+    $licenses = $this->getLicenses();
+    $link = '';
+    if(isset($licenses[$key]) && isset($licenses[$key]['link']))
+      $link = $licenses[$key]['link'];
+    return $this->returnValue($link, $write);
+  }
+
   public function permissionAsText($permission, $write = true)
   {
     return $this->returnValue(($permission ? 'public' : 'private'), $write);
@@ -251,9 +308,19 @@ class Utility
   {
     $word = $this->safe($word, false);
     if(empty($word))
-      return $this->returnValue(($int > 1 ? 's' : ''), $write);
+      return $this->returnValue(($int != 1 ? 's' : ''), $write);
     else
-      return $this->returnValue(($int > 1 ? "{$word}s" : $word), $write);
+      return $this->returnValue(($int != 1 ? "{$word}s" : $word), $write);
+  }
+
+  public function posessive($noun, $write = true)
+  {
+    if(substr($noun, -1) === 's')
+      $val = sprintf('%s', $noun);
+    else
+      $val = sprintf("%s's", $noun);
+
+    return $this->returnValue($val, $write);
   }
 
   public function returnValue($value, $write = true)
@@ -269,10 +336,14 @@ class Utility
     return $this->returnValue(htmlspecialchars($string), $write);
   }
 
+  public function mapLinkUrl($latitude, $longitude, $zoom, $write = true)
+  {
+    return $this->returnValue(getMap()->linkUrl($latitude, $longitude, $zoom), $write);
+  }
+
   public function staticMapUrl($latitude, $longitude, $zoom, $size, $type = 'roadmap', $write = true)
   {
-    //http://maps.googleapis.com/maps/api/staticmap?center=Brooklyn+Bridge,New+York,NY&zoom=14&size=512x512&maptype=roadmap&markers=color:blue%7Clabel:S%7C40.702147,-74.015794&markers=color:green%7Clabel:G%7C40.711614,-74.012318&markers=color:red%7Ccolor:red%7Clabel:C%7C40.718217,-73.998284&sensor=false
-    return $this->returnValue("http://maps.googleapis.com/maps/api/staticmap?center={$latitude},{$longitude}&zoom={$zoom}&size={$size}&maptype={$type}&markers=color:gray%7C{$latitude},{$longitude}&sensor=false", $write);
+    return $this->returnValue(getMap()->staticMap($latitude, $longitude, $zoom, $size, $type), $write);
   }
 
   public function timeAsText($time, $prefix = null, $suffix = null, $write = true)
@@ -330,14 +401,4 @@ class Utility
     }
     return $headers;
   }
-}
-
-function getUtility()
-{
-  static $utility;
-  if($utility)
-    return $utility;
-
-  $utility = new Utility;
-  return $utility;
 }

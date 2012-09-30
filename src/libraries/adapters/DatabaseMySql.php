@@ -34,7 +34,6 @@ class DatabaseMySql implements DatabaseInterface
       EpiDatabase::employ('mysql', $mysql->mySqlDb,
                           $mysql->mySqlHost, $mysql->mySqlUser, $utilityObj->decrypt($mysql->mySqlPassword));
       $this->db = getDatabase();
-      $this->db->execute("SET NAMES 'utf8'");
     }
 
     foreach($mysql as $key => $value)
@@ -54,8 +53,26 @@ class DatabaseMySql implements DatabaseInterface
     */
   public function deleteAction($id)
   {
-    $res = $this->db->execute("DELETE FROM `{$this->mySqlTablePrefix}action` WHERE `id`=:id AND owner=:owner", array(':id' => $id, ':owner' => $this->owner));
+    $res = $this->db->execute("DELETE FROM `{$this->mySqlTablePrefix}action` WHERE `id`=:id AND `owner`=:owner", array(':id' => $id, ':owner' => $this->owner));
     return ($res !== false);
+  }
+
+  /**
+    * Delete an album from the database
+    *
+    * @param string $id ID of the action to delete
+    * @return boolean
+    */
+  public function deleteAlbum($id)
+  {
+    // if one fails then don't continue by using the second condition
+    $res1 = $this->db->execute("DELETE FROM `{$this->mySqlTablePrefix}album` WHERE `id`=:id AND `owner`=:owner", array(':id' => $id, ':owner' => $this->owner));
+    $res2 = $this->db->execute("DELETE FROM `{$this->mySqlTablePrefix}elementAlbum` WHERE `owner`=:owner AND `album`=:album", array(':owner' => $this->owner, ':album' => $id));
+
+    if($res1 === false || $res2 === false)
+      return false;
+
+    return true;
   }
 
   /**
@@ -82,7 +99,7 @@ class DatabaseMySql implements DatabaseInterface
   }
 
   /**
-    * Delete a photo from the database
+    * Delete a photo in it's entirety from the database
     *
     * @param string $id ID of the photo to delete
     * @return boolean
@@ -92,9 +109,25 @@ class DatabaseMySql implements DatabaseInterface
     if(!isset($photo['id']))
       return false;
 
-    $res = $this->db->execute("DELETE FROM `{$this->mySqlTablePrefix}photo` WHERE `id`=:id AND owner=:owner", array(':id' => $photo['id'], ':owner' => $this->owner));
-    // TODO delete all versions
-    return ($res !== false);
+    $resPhoto = $this->db->execute("DELETE FROM `{$this->mySqlTablePrefix}photo` WHERE `id`=:id AND owner=:owner", array(':id' => $photo['id'], ':owner' => $this->owner));
+    $resVersions = $this->deletePhotoVersions($photo);
+
+    return ($resPhoto !== false && $resVersions !== false);
+  }
+
+  /**
+    * Delete a photos versions excluding base and original
+    *
+    * @param string $id ID of the photo to delete versions of
+    * @return boolean
+    */
+  public function deletePhotoVersions($photo)
+  {
+    if(!isset($photo['id']))
+      return false;
+
+    $res = $this->db->execute("DELETE FROM `{$this->mySqlTablePrefix}photoVersion` WHERE `id`=:id AND owner=:owner", array(':id' => $photo['id'], ':owner' => $this->owner));
+    return $res !== false;
   }
 
   /**
@@ -129,12 +162,13 @@ class DatabaseMySql implements DatabaseInterface
     */
   public function diagnostics()
   {
+    $utilityObj = new Utility;
     $diagnostics = array();
     $res = $this->db->execute("SELECT * FROM `{$this->mySqlTablePrefix}photo` WHERE owner=:owner LIMIT 1", array(':owner' => $this->owner));
     if($res == 1)
-      $diagnostics[] = Utility::diagnosticLine(true, 'Database connectivity is okay.');
+      $diagnostics[] = $utilityObj->diagnosticLine(true, 'Database connectivity is okay.');
     else
-      $diagnostics[] = Utility::diagnosticLine(false, 'Could not properly connect to the database.');
+      $diagnostics[] = $utilityObj->diagnosticLine(false, 'Could not properly connect to the database.');
 
     return $diagnostics;
   }
@@ -173,10 +207,119 @@ class DatabaseMySql implements DatabaseInterface
     $action = $this->db->one("SELECT * FROM `{$this->mySqlTablePrefix}action` WHERE `id`=:id AND owner=:owner",
                                array(':id' => $id, ':owner' => $this->owner));
     if(empty($action))
-    {
       return false;
-    }
-    return self::normalizeCredential($action);
+    
+    return $this->normalizeAction($action);
+  }
+
+  /**
+    * Retrieves activities
+    *
+    * @return mixed Array on success, FALSE on failure
+    */
+  public function getActivities($filters = array(), $limit = 10)
+  {
+    $filters['sortBy'] = 'dateCreated,desc';
+    $buildQuery = $this->buildQuery($filters, $limit, null, 'activity');
+    $activities = $this->db->all($sql = "SELECT * FROM `{$this->mySqlTablePrefix}activity` {$buildQuery['where']} {$buildQuery['sortBy']} {$buildQuery['limit']}",
+                               array(':owner' => $this->owner));
+    if($activities === false)
+      return false;
+
+    foreach($activities as $key => $activity)
+      $activities[$key] = $this->normalizeActivity($activity);
+
+    return $activities;
+  }
+
+  /**
+    * Retrieves activity
+    *
+    * @param string $id ID of the activity to get
+    * @return mixed Array on success, FALSE on failure
+    */
+  public function getActivity($id)
+  {
+    $activity = $this->db->all("SELECT * FROM `{$this->mySqlTablePrefix}activity` WHERE `id`=:id AND `owner`=:owner",
+                               array(':id' => $id, ':owner' => $this->owner));
+    if($activity === false)
+      return false;
+
+    $activity = $this->normalizeActivity($activity);
+
+    return $activity;
+  }
+
+  /**
+    * Retrieves album
+    *
+    * @param string $id ID of the album to get
+    * @param string $email email of viewer to determine which albums they have access to
+    * @return mixed Array on success, FALSE on failure
+    */
+  public function getAlbum($id, $email)
+  {
+    $album = $this->db->one("SELECT * FROM `{$this->mySqlTablePrefix}album` WHERE `owner`=:owner AND `id`=:id ",
+      array(':id' => $id, ':owner' => $this->owner));
+
+    if($album === false)
+      return false;
+
+    $album = $this->normalizeAlbum($album);
+    return $album;
+  }
+
+  /**
+    * Retrieve elements for an album
+    *
+    * @param string $id ID of the album to get elements of
+    * @return mixed Array on success, FALSE on failure
+    */
+  public function getAlbumElements($id)
+  {
+    $photos = $this->db->all("SELECT `pht`.* 
+      FROM `{$this->mySqlTablePrefix}photo` AS `pht` INNER JOIN `{$this->mySqlTablePrefix}elementAlbum` AS `alb` ON `pht`.`id`=`alb`.`element`
+      WHERE `pht`.`owner`=:owner AND `alb`.`owner`=:owner",
+      array(':owner' => $this->owner));
+
+    if($photos === false)
+      return false;
+
+    foreach($photos as $key => $photo)
+      $photos[$key] = $this->normalizePhoto($photo);
+    return $photos;
+  }
+
+  /**
+    * Retrieve albums
+    *
+    * @param string $email email of viewer to determine which albums they have access to
+    * @return mixed Array on success, FALSE on failure
+    */
+  public function getAlbums($email, $limit = null, $offset = null)
+  {
+    // TODO jmathai, confirm MySql is optimized for a high LIMIT
+    if($limit === null)
+      $limit = 10;
+    elseif($limit === 0)
+      $limit = PHP_INT_MAX;
+
+    $limit = (int)$limit;
+    $offset = (int)$offset;
+
+    if($this->owner === $email)
+      $albums = $this->db->all("SELECT * FROM `{$this->mySqlTablePrefix}album` WHERE `owner`=:owner ORDER BY `name` LIMIT {$offset}, {$limit}", array(':owner' => $this->owner));
+    else
+      $albums = $this->db->all("SELECT * FROM `{$this->mySqlTablePrefix}album` WHERE `owner`=:owner AND `visible`=1 ORDER BY `name` LIMIT {$offset}, {$limit}", array(':owner' => $this->owner));
+
+
+    if($albums === false)
+      return false;
+
+    foreach($albums as $key => $album)
+      $albums[$key] = $this->normalizeAlbum($album);
+    
+    return $albums;
   }
 
   /**
@@ -193,7 +336,7 @@ class DatabaseMySql implements DatabaseInterface
     {
       return false;
     }
-    return self::normalizeCredential($cred);
+    return $this->normalizeCredential($cred);
   }
 
   /**
@@ -210,7 +353,7 @@ class DatabaseMySql implements DatabaseInterface
     {
       return false;
     }
-    return self::normalizeCredential($cred);
+    return $this->normalizeCredential($cred);
   }
 
   /**
@@ -220,7 +363,9 @@ class DatabaseMySql implements DatabaseInterface
     */
   public function getCredentials()
   {
-    $res = $this->db->all("SELECT * FROM `{$this->mySqlTablePrefix}credential` WHERE owner=:owner AND status=1", array(':owner' => $this->owner));
+    $res = $this->db->all("SELECT * FROM `{$this->mySqlTablePrefix}credential` WHERE owner=:owner AND status=1
+						   ORDER BY `dateCreated` DESC", 
+						   array(':owner' => $this->owner));
     if($res === false)
     {
       return false;
@@ -230,7 +375,7 @@ class DatabaseMySql implements DatabaseInterface
     {
       foreach($res as $cred)
       {
-        $credentials[] = self::normalizeCredential($cred);
+        $credentials[] = $this->normalizeCredential($cred);
       }
     }
     return $credentials;
@@ -252,7 +397,7 @@ class DatabaseMySql implements DatabaseInterface
     foreach($res as $r)
       $group['members'][] = $r['email'];
 
-    return self::normalizeGroup($group);
+    return $this->normalizeGroup($group);
   }
 
   /**
@@ -267,13 +412,13 @@ class DatabaseMySql implements DatabaseInterface
     if(empty($email))
       $res = $this->db->all("SELECT `grp`.*, `memb`.`email` 
         FROM `{$this->mySqlTablePrefix}group` AS `grp` 
-        INNER JOIN `{$this->mySqlTablePrefix}groupMember` AS `memb` ON `grp`.`owner`=`memb`.`owner` AND `grp`.`id`=`memb`.`group` 
+        LEFT JOIN `{$this->mySqlTablePrefix}groupMember` AS `memb` ON `grp`.`owner`=`memb`.`owner` AND `grp`.`id`=`memb`.`group` 
         WHERE `grp`.`id` IS NOT NULL AND `grp`.`owner`=:owner 
         ORDER BY `grp`.`name`", array(':owner' => $this->owner));
     else
       $res = $this->db->all("SELECT `grp`.*, `memb`.`email` 
         FROM `{$this->mySqlTablePrefix}group` AS `grp` 
-        INNER JOIN `{$this->mySqlTablePrefix}groupMember` AS `memb` ON `grp`.`owner`=`memb`.`owner` AND `grp`.`id`=`memb`.`group` 
+        LEFT JOIN `{$this->mySqlTablePrefix}groupMember` AS `memb` ON `grp`.`owner`=`memb`.`owner` AND `grp`.`id`=`memb`.`group` 
         WHERE `memb`.`email`=:email AND `grp`.`id` IS NOT NULL AND `grp`.`owner`=:owner 
         ORDER BY `grp`.`name`", array(':email' => $email, ':owner' => $this->owner));
 
@@ -290,7 +435,7 @@ class DatabaseMySql implements DatabaseInterface
           $tempGroups[$group['id']]['members'][] = $group['email'];
         }
         foreach($tempGroups as $g)
-          $groups[] = self::normalizeGroup($g);
+          $groups[] = $this->normalizeGroup($g);
       }
       return $groups;
     }
@@ -309,7 +454,7 @@ class DatabaseMySql implements DatabaseInterface
     $photo = $this->db->one("SELECT * FROM `{$this->mySqlTablePrefix}photo` WHERE `id`=:id AND owner=:owner", array(':id' => $id, ':owner' => $this->owner));
     if(empty($photo))
       return false;
-    return self::normalizePhoto($photo);
+    return $this->normalizePhoto($photo);
   }
 
   /**
@@ -320,20 +465,46 @@ class DatabaseMySql implements DatabaseInterface
     */
   public function getPhotoNextPrevious($id, $filterOpts = null)
   {
-    $buildQuery = $this->buildQuery($filterOpts, null, null);
+    $buildQuery = $this->buildQuery($filterOpts, null, null, 'photo');
     $photo = $this->getPhoto($id);
-    if(!$photo)
+    if(!$photo || !isset($photo['dateSortByDay']) || empty($photo['dateSortByDay']))
       return false;
 
     // owner is in buildQuery
-    $photo_prev = $this->db->one("SELECT `{$this->mySqlTablePrefix}photo`.* {$buildQuery['from']} {$buildQuery['where']} AND dateTaken> :dateTaken AND dateTaken IS NOT NULL {$buildQuery['groupBy']} ORDER BY dateTaken ASC LIMIT 1", array(':dateTaken' => $photo['dateTaken']));
-    $photo_next = $this->db->one("SELECT `{$this->mySqlTablePrefix}photo`.* {$buildQuery['from']} {$buildQuery['where']} AND dateTaken< :dateTaken AND dateTaken IS NOT NULL {$buildQuery['groupBy']} ORDER BY dateTaken DESC LIMIT 1", array(':dateTaken' => $photo['dateTaken']));
+    // TODO: paginating with random sorting is a pain - default for now
+    // determine where to start
+    // this should return the immediately adjacent photo prior to $photo
+    // if there are none we set it to the current photo and only get a next
+    $startResp = $this->db->one("SELECT `dateSortByDay` FROM `{$this->mySqlTablePrefix}photo` {$buildQuery['where']} AND `dateSortByDay` < :dateSortByDay {$buildQuery['groupBy']} ORDER BY `dateSortByDay` DESC", 
+      array(':dateSortByDay' => $photo['dateSortByDay']));
+    if(!empty($startResp))
+      $startValue = $startResp['dateSortByDay'];
+    else
+      $startValue = $photo['dateSortByDay'];
+
+    // remembering that the photos are sorted in descending order on dateSortByDay
+    // we reverse the sort so it's the oldest first then select everything after the 
+    // photo immediately older than this one
+    $photosNextPrev = $this->db->all(
+      $sql = " SELECT `{$this->mySqlTablePrefix}photo`.*
+        {$buildQuery['from']}
+        {$buildQuery['where']} AND `dateSortByDay` >= :startValue
+        {$buildQuery['groupBy']}
+        ORDER BY `dateSortByDay` ASC
+        LIMIT 3", 
+      array(':startValue' => $startValue)
+    );
 
     $ret = array();
-    if($photo_prev)
-      $ret['previous'] = self::normalizePhoto($photo_prev);
-    if($photo_next)
-      $ret['next'] = self::normalizePhoto($photo_next);
+    if(!empty($photosNextPrev))
+    {
+      if($photosNextPrev[0]['dateSortByDay'] < $photo['dateSortByDay'])
+        $ret['next'] = $this->normalizePhoto($photosNextPrev[0]);
+
+      $last = array_pop($photosNextPrev);
+      if($last && $last['dateSortByDay'] > $photo['dateSortByDay'])
+        $ret['previous'] = $this->normalizePhoto($last);
+    }
 
     return $ret;
   }
@@ -356,7 +527,7 @@ class DatabaseMySql implements DatabaseInterface
       if(!empty($actions))
       {
         foreach($actions as $action)
-           $photo['actions'][] = $action;
+           $photo['actions'][] = $this->normalizeAction($action);
       }
     }
     return $photo;
@@ -370,23 +541,38 @@ class DatabaseMySql implements DatabaseInterface
     */
   public function getPhotos($filters = array(), $limit = 20, $offset = null)
   {
-    $query = $this->buildQuery($filters, $limit, $offset);
-
+    $query = $this->buildQuery($filters, $limit, $offset, 'photo');
     // buildQuery includes owner
     $photos = $this->db->all($sql = "SELECT {$this->mySqlTablePrefix}photo.* {$query['from']} {$query['where']} {$query['groupBy']} {$query['sortBy']} {$query['limit']} {$query['offset']}");
     if($photos === false)
       return false;
 
     for($i = 0; $i < count($photos); $i++)
-      $photos[$i] = self::normalizePhoto($photos[$i]);
+      $photos[$i] = $this->normalizePhoto($photos[$i]);
 
     // TODO evaluate SQL_CALC_FOUND_ROWS (indexes with the query builder might be hard to optimize)
     // http://www.mysqlperformanceblog.com/2007/08/28/to-sql_calc_found_rows-or-not-to-sql_calc_found_rows/
     $result = $this->db->one("SELECT COUNT(*) {$query['from']} {$query['where']} {$query['groupBy']}");
     if(!empty($result))
-      $photos[0]['totalRows'] = $result['COUNT(*)'];
+      $photos[0]['totalRows'] = intval($result['COUNT(*)']);
 
     return $photos;
+  }
+
+  /**
+    * Get a resource map
+    *
+    * @param string $id tag to be retrieved
+    * @return mixed Array on success, FALSE on failure
+    */
+  public function getResourceMap($id)
+  {
+    $resourceMap = $this->db->one("SELECT * FROM `{$this->mySqlTablePrefix}resourceMap` WHERE `owner`=:owner AND `id`=:id", array(':owner' => $this->owner, ':id' => $id));
+    if(!$resourceMap)
+      return false;
+
+    $resourceMap = $this->normalizeResourceMap($resourceMap);
+    return $resourceMap;
   }
 
   /**
@@ -398,7 +584,7 @@ class DatabaseMySql implements DatabaseInterface
     */
   public function getTag($tag)
   {
-    $tag = $this->db->one('SELECT * FROM `{$this->mySqlTablePrefix}tag` WHERE `id`=:id AND owner=:owner', array(':id' => $tag));
+    $tag = $this->db->one('SELECT * FROM `{$this->mySqlTablePrefix}tag` WHERE `id`=:id AND `owner`=:owner', array(':id' => $tag));
     // TODO this should be in the normalize method
     if($tag['params'])
       $tag = array_merge($tag, json_decode($tag['params'], 1));
@@ -413,24 +599,36 @@ class DatabaseMySql implements DatabaseInterface
     * @param array $filters Filters to be applied to the list
     * @return mixed Array on success, FALSE on failure
     */
-  public function getTags($filter = array())
+  public function getTags($filters = array())
   {
     $countField = 'countPublic';
+    $sortBy = '`id`';
     $params = array(':owner' => $this->owner);
+    if(isset($filters['sortBy']))
+    {
+      $sortParts = (array)explode(',', $filters['sortBy']);
+      $sortParts[0] = $this->_($sortParts[0]);
+      $sortBy = "`{$sortParts[0]}` ";
+      if(isset($sortParts[1]))
+      {
+        $sortParts[1] = $this->_($sortParts[1]);
+        $sortBy .= $sortParts[1];
+      }
+    }
 
-    if(isset($filter['permission']) && $filter['permission'] == 0)
+    if(isset($filters['permission']) && $filters['permission'] == 0)
       $countField = 'countPrivate';
 
-    if(isset($filter['search']) && $filter['search'] != '')
+    if(isset($filters['search']) && $filters['search'] != '')
     {
-      $query = "SELECT * FROM `{$this->mySqlTablePrefix}tag` WHERE `id` IS NOT NULL AND `owner`=:owner AND `{$countField}` IS NOT NULL AND `{$countField}` > '0' AND `id` LIKE :search ORDER BY `id`";
-      $params[':search'] = "{$filter['search']}%";
+      $filters['search'] = $this->_($filters['search']);
+      $query = "SELECT * FROM `{$this->mySqlTablePrefix}tag` WHERE `id` IS NOT NULL AND `owner`=:owner AND `{$countField}` IS NOT NULL AND `{$countField}` > '0' AND `id` LIKE :search ORDER BY {$sortBy}";
+      $params[':search'] = "{$filters['search']}%";
     }
     else
     {
-      $query = "SELECT * FROM `{$this->mySqlTablePrefix}tag` WHERE `id` IS NOT NULL AND `owner`=:owner AND `{$countField}` IS NOT NULL AND `{$countField}` > '0' ORDER BY `id`";
+      $query = "SELECT * FROM `{$this->mySqlTablePrefix}tag` WHERE `id` IS NOT NULL AND `owner`=:owner AND `{$countField}` IS NOT NULL AND `{$countField}` > '0' ORDER BY {$sortBy}";
     }
-
     $tags = $this->db->all($query, $params);
 
     if($tags === false)
@@ -458,10 +656,24 @@ class DatabaseMySql implements DatabaseInterface
       $owner = $this->owner;
     $res = $this->db->one($sql = "SELECT * FROM `{$this->mySqlTablePrefix}user` WHERE `id`=:owner", array(':owner' => $owner));
     if($res)
-    {
-      return self::normalizeUser($res);
-    }
+      return $this->normalizeUser($res);
     return null;
+  }
+
+  /**
+    * Get the user record entry by username and password.
+    *
+    * @return mixed Array on success, otherwise FALSE
+    */
+  public function getUserByEmailAndPassword($email = null, $password = null)
+  {
+    if($email == '' || $password == '')
+      return false;;
+
+    $res = $this->db->one($sql = "SELECT * FROM `{$this->mySqlTablePrefix}user` WHERE `id`=:email AND `password`=:password", array(':email' => $email, ':password' => $password));
+    if($res)
+      return $this->normalizeUser($res);
+    return false;
   }
 
   /**
@@ -475,7 +687,7 @@ class DatabaseMySql implements DatabaseInterface
     $webhook = $this->db->one("SELECT * FROM `{$this->mySqlTablePrefix}webhook` WHERE `id`=:id AND owner=:owner", array(':id' => $id, ':owner' => $this->owner));
     if(empty($webhook))
       return false;
-    return self::normalizeWebhook($webhook);
+    return $this->normalizeWebhook($webhook);
   }
 
   /**
@@ -498,7 +710,7 @@ class DatabaseMySql implements DatabaseInterface
     $webhooks = array();
     foreach($res as $webhook)
     {
-      $webhooks[] = self::normalizeWebhook($webhook);
+      $webhooks[] = $this->normalizeWebhook($webhook);
     }
     return $webhooks;
   }
@@ -567,6 +779,68 @@ class DatabaseMySql implements DatabaseInterface
   }
 
   /**
+    * Update an existing album in the database
+    * This method does not overwrite existing values present in $params - hence "new action".
+    *
+    * @param string $id ID of the action to update which is always 1.
+    * @param array $params Attributes to update.
+    * @return boolean
+    */
+  public function postAlbum($id, $params)
+  {
+    $params = $this->prepareAlbum($params);
+    $params['owner'] = $this->owner;
+    $bindings = array();
+    if(isset($params['::bindings']))
+      $bindings = $params['::bindings'];
+    $stmt = $this->sqlUpdateExplode($params, $bindings);
+    $bindings[':id'] = $id;
+    $bindings[':owner'] = $this->owner;
+
+    $result = $this->db->execute("UPDATE `{$this->mySqlTablePrefix}album` SET {$stmt} WHERE `id`=:id AND owner=:owner", $bindings);
+    return ($result !== false);
+  }
+
+  /**
+    * Add an element to an album
+    *
+    * @param string $albumId ID of the album to update.
+    * @param string $type Type of element
+    * @param array $elementIds IDs of the elements to update.
+    * @return boolean
+    */
+  public function postAlbumAdd($albumId, $type, $elementIds)
+  {
+    $res = true;
+    foreach($elementIds as $elementId)
+    {
+      $tmpRes = $this->db->execute("REPLACE INTO `{$this->mySqlTablePrefix}elementAlbum`(`owner`,`type`,`element`,`album`) VALUES(:owner,:type,:elementId,:albumId)",
+        array(':owner' => $this->owner, ':type' => $type, ':elementId' => $elementId, ':albumId' => $albumId));
+      $res = $res && $tmpRes !== 0;
+    }
+    return $res !== false;
+  }
+
+  /**
+    * Remove an element from an album
+    *
+    * @param string $albumId ID of the album to update.
+    * @param string $type Type of element
+    * @param array $elementIds IDs of the elements to update.
+    * @return boolean
+    */
+  public function postAlbumRemove($albumId, $type, $elementIds)
+  {
+    $res = true;
+    foreach($elementIds as $elementId)
+    {
+      $res = $res && $this->db->execute("DELETE FROM `{$this->mySqlTablePrefix}elementAlbum` WHERE `owner`=:owner AND `element`=:elementId AND `album`=:albumId AND `type`=:type",
+        array(':owner' => $this->owner, ':elementId' => $elementId, ':albumId' => $albumId, ':type' => $type));
+    }
+    return $res !== false;
+  }
+
+  /**
     * Update the information for an existing credential.
     * This method overwrites existing values present in $params.
     *
@@ -576,13 +850,11 @@ class DatabaseMySql implements DatabaseInterface
     */
   public function postCredential($id, $params)
   {
-    $params = self::prepareCredential($params);
+    $params = $this->prepareCredential($params);
     $bindings = array();
     if(isset($params['::bindings']))
-    {
       $bindings = $params['::bindings'];
-    }
-    $stmt = self::sqlUpdateExplode($params, $bindings);
+    $stmt = $this->sqlUpdateExplode($params, $bindings);
     $bindings[':id'] = $id;
     $bindings[':owner'] = $this->owner;
 
@@ -607,13 +879,13 @@ class DatabaseMySql implements DatabaseInterface
       $members = !empty($params['members']) ? (array)explode(',', $params['members']) : null;
       unset($params['members']);
     }
-    $params = self::prepareGroup($id, $params);
+    $params = $this->prepareGroup($id, $params);
     $bindings = array();
     if(isset($params['::bindings']))
     {
       $bindings = $params['::bindings'];
     }
-    $stmt = self::sqlUpdateExplode($params, $bindings);
+    $stmt = $this->sqlUpdateExplode($params, $bindings);
     $bindings[':id'] = $id;
     $bindings[':owner'] = $this->owner;
 
@@ -660,15 +932,20 @@ class DatabaseMySql implements DatabaseInterface
     {
       if(isset($params['groups']))
       {
-        $this->deleteGroupsFromElement($id, 'photo');
-        $this->addGroupsToElement($id, $params['groups'], 'photo');
+        $this->updateGroupToPhotoMapping($id, $params['groups']);
         // TODO: Generalize this and use for tags too -- @jmathai
-        $params['groups'] = preg_replace(array('/^,|,$/','/,{2,}/'), array('', ','), implode(',', $params['groups']));
+        $params['groups'] = preg_replace(array('/^,|,$/','/,{2,}/'), array('', ','), $params['groups']);
       }
-      $params = self::preparePhoto($id, $params);
+      if(isset($params['albums']))
+      {
+        $this->updateAlbumToPhotoMapping($id, $params['albums']);
+        // TODO: Generalize this and use for tags too -- @jmathai
+        $params['albums'] = preg_replace(array('/^,|,$/','/,{2,}/'), array('', ','), $params['albums']);
+      }
+      $params = $this->preparePhoto($id, $params);
       unset($params['id']);
       $bindings = $params['::bindings'];
-      $stmt = self::sqlUpdateExplode($params, $bindings);
+      $stmt = $this->sqlUpdateExplode($params, $bindings);
       $res = $this->db->execute("UPDATE `{$this->mySqlTablePrefix}photo` SET {$stmt} WHERE `id`=:id AND owner=:owner", 
         array_merge($bindings, array(':id' => $id, ':owner' => $this->owner)));
     }
@@ -704,14 +981,14 @@ class DatabaseMySql implements DatabaseInterface
       $params['id'] = $id;
     }
     $params['owner'] = $this->owner;
-    $params = self::prepareTag($params);
+    $params = $this->prepareTag($params);
     if(isset($params['::bindings']))
       $bindings = $params['::bindings'];
     else
       $bindings = array();
 
-    $stmtIns = self::sqlInsertExplode($params, $bindings);
-    $stmtUpd = self::sqlUpdateExplode($params, $bindings);
+    $stmtIns = $this->sqlInsertExplode($params, $bindings);
+    $stmtUpd = $this->sqlUpdateExplode($params, $bindings);
 
     $result = $this->db->execute("INSERT INTO `{$this->mySqlTablePrefix}tag` ({$stmtIns['cols']}) VALUES ({$stmtIns['vals']}) ON DUPLICATE KEY UPDATE {$stmtUpd}", $bindings);
     return ($result !== false);
@@ -746,8 +1023,19 @@ class DatabaseMySql implements DatabaseInterface
     */
   public function postUser($params)
   {
-    $params = self::prepareUser($params);
-    $res = $this->db->execute("UPDATE `{$this->mySqlTablePrefix}user` SET `extra`=:extra WHERE `id`=:id", array(':id' => $this->owner, ':extra' => $params));
+    $params = $this->prepareUser($params);
+    if(isset($params['password']) && !empty($params['password']))
+    {
+      $sql = "UPDATE `{$this->mySqlTablePrefix}user` SET `password`=:password,`extra`=:extra WHERE `id`=:id";
+      $params = array(':id' => $this->owner, ':password' => $params['password'], ':extra' => $params['extra']);
+    }
+    else
+    {
+      $sql = "UPDATE `{$this->mySqlTablePrefix}user` SET `extra`=:extra WHERE `id`=:id";
+      $params = array(':id' => $this->owner, ':extra' => $params['extra']);
+    }
+
+    $res = $this->db->execute($sql, $params); 
     return ($res == 1);
   }
 
@@ -760,9 +1048,24 @@ class DatabaseMySql implements DatabaseInterface
     */
   public function postWebhook($id, $params)
   {
-    $stmt = self::sqlUpdateExplode($params);
+    $stmt = $this->sqlUpdateExplode($params);
     $res = $this->db->execute("UPDATE `{$this->mySqlTablePrefix}webhook` SET {$stmt} WHERE `id`=:id AND owner=:owner", array(':id' => $id, ':owner' => $this->owner));
     return ($res == 1);
+  }
+
+  /**
+    * Add a new activity to the database
+    * This method does not overwrite existing values present in $params - hence "new action".
+    *
+    * @param string $id ID of the action to update which is always 1.
+    * @param array $params Attributes to update.
+    * @return boolean
+    */
+  public function putActivity($id, $params)
+  {
+    $stmt = $this->sqlInsertExplode($this->prepareActivity($params));
+    $result = $this->db->execute("REPLACE INTO `{$this->mySqlTablePrefix}activity` (id,{$stmt['cols']}) VALUES (:id,{$stmt['vals']})", array(':id' => $id));
+    return ($result !== false);
   }
 
   /**
@@ -775,8 +1078,24 @@ class DatabaseMySql implements DatabaseInterface
     */
   public function putAction($id, $params)
   {
-    $stmt = self::sqlInsertExplode($params);
+    $stmt = $this->sqlInsertExplode($params);
     $result = $this->db->execute("INSERT INTO `{$this->mySqlTablePrefix}action` (id,{$stmt['cols']}) VALUES (:id,{$stmt['vals']})", array(':id' => $id));
+    return ($result !== false);
+  }
+
+  /**
+    * Add a new album to the database
+    * This method does not overwrite existing values present in $params - hence "new action".
+    *
+    * @param string $id ID of the action to update which is always 1.
+    * @param array $params Attributes to update.
+    * @return boolean
+    */
+  public function putAlbum($id, $params)
+  {
+    $params['owner'] = $this->owner;
+    $stmt = $this->sqlInsertExplode($params);
+    $result = $this->db->execute($sql = "INSERT INTO `{$this->mySqlTablePrefix}album` (id,{$stmt['cols']}) VALUES (:id,{$stmt['vals']})", array(':id' => $id));
     return ($result !== false);
   }
 
@@ -793,8 +1112,8 @@ class DatabaseMySql implements DatabaseInterface
     $params['owner'] = $this->owner;
     if(!isset($params['id']))
       $params['id'] = $id;
-    $params = self::prepareCredential($params);
-    $stmt = self::sqlInsertExplode($params);
+    $params = $this->prepareCredential($params);
+    $stmt = $this->sqlInsertExplode($params);
     $result = $this->db->execute("INSERT INTO `{$this->mySqlTablePrefix}credential` ({$stmt['cols']}) VALUES ({$stmt['vals']})");
 
     return ($result !== false);
@@ -814,8 +1133,8 @@ class DatabaseMySql implements DatabaseInterface
       $members = !empty($params['members']) ? (array)explode(',', $params['members']) : null;
       unset($params['members']);
     }
-    $params = self::prepareGroup($id, $params);
-    $stmt = self::sqlInsertExplode($params);
+    $params = $this->prepareGroup($id, $params);
+    $stmt = $this->sqlInsertExplode($params);
     $result = $this->db->execute("INSERT INTO `{$this->mySqlTablePrefix}group` ({$stmt['cols']}) VALUES ({$stmt['vals']})");
     if($members !== false)
       $this->addGroupMembers($id, $members);
@@ -837,9 +1156,21 @@ class DatabaseMySql implements DatabaseInterface
     $tags = null;
     if(isset($params['tags']) && !empty($params['tags']))
       $tags = (array)explode(',', $params['tags']);
-    $params = self::preparePhoto($id, $params);
+    if(isset($params['groups']))
+    {
+      $this->updateGroupToPhotoMapping($id, $params['groups']);
+      // TODO: Generalize this and use for tags too -- @jmathai
+      $params['groups'] = preg_replace(array('/^,|,$/','/,{2,}/'), array('', ','), $params['groups']);
+    }
+    if(isset($params['albums']))
+    {
+      $this->updateAlbumToPhotoMapping($id, $params['albums']);
+      // TODO: Generalize this and use for tags too -- @jmathai
+      $params['albums'] = preg_replace(array('/^,|,$/','/,{2,}/'), array('', ','), $params['albums']);
+    }
+    $params = $this->preparePhoto($id, $params);
     $bindings = $params['::bindings'];
-    $stmt = self::sqlInsertExplode($params, $bindings);
+    $stmt = $this->sqlInsertExplode($params, $bindings);
     $result = $this->db->execute("INSERT INTO `{$this->mySqlTablePrefix}photo` ({$stmt['cols']}) VALUES ({$stmt['vals']})", $bindings);
     if(!empty($tags))
     {
@@ -847,6 +1178,24 @@ class DatabaseMySql implements DatabaseInterface
         $this->addTagToElement($id, $tag, 'photo');
     }
     return ($result !== false);
+  }
+
+  /**
+    * Create a resource map
+    *
+    * @param string $id resource map to be retrieved
+    * @param array $params Attributes to create
+    * @return mixed Array on success, FALSE on failure
+    */
+  public function putResourceMap($id, $params)
+  {
+    if(!isset($params['id']))
+      $params['id'] = $id;
+    $params['owner'] = $this->owner;
+    $params = $this->prepareResourceMap($params);
+    $stmt = $this->sqlInsertExplode($params);
+    $result = $this->db->execute("INSERT INTO `{$this->mySqlTablePrefix}resourceMap` ({$stmt['cols']}) VALUES ({$stmt['vals']})");
+    return  ($result !== false);
   }
 
   /**
@@ -872,8 +1221,19 @@ class DatabaseMySql implements DatabaseInterface
     */
   public function putUser($params)
   {
-    $params = self::prepareUser($params);
-    $result = $this->db->execute("INSERT INTO `{$this->mySqlTablePrefix}user` (`id`,`extra`) VALUES (:id,:extra)", array(':id' => $this->owner, ':extra' => $params['extra']));
+    $params = $this->prepareUser($params);
+    if(isset($params['password']))
+    {
+      $sql = "INSERT INTO `{$this->mySqlTablePrefix}user` (`id`,`password`,`extra`) VALUES (:id,:password,:extra)";
+      $params = array(':id' => $this->owner, ':password' => $params['password'], ':extra' => $params['extra']);
+    }
+    else
+    {
+      $sql = "INSERT INTO `{$this->mySqlTablePrefix}user` (`id`,`extra`) VALUES (:id,:extra)";
+      $params = array(':id' => $this->owner, ':extra' => $params['extra']);
+    }
+
+    $result = $this->db->execute($sql, $params);
     return $result !== false;
   }
 
@@ -886,7 +1246,7 @@ class DatabaseMySql implements DatabaseInterface
     */
   public function putWebhook($id, $params)
   {
-    $stmt = self::sqlInsertExplode($params);
+    $stmt = $this->sqlInsertExplode($params);
     $result = $this->db->execute("INSERT INTO `{$this->mySqlTablePrefix}webhook` (id,owner,{$stmt['cols']}) VALUES (:id,:owner,{$stmt['vals']})", array(':id' => $id, ':owner' => $this->owner));
     return $result !== false;
   }
@@ -910,6 +1270,39 @@ class DatabaseMySql implements DatabaseInterface
     }
 
     return '0.0.0';
+  }
+
+  /**
+    * Insert albums into the mapping table
+    *
+    * @param string $id Element id (id of the photo or video)
+    * @param string $albums Album IDs to be added
+    * @param string $type Element type (photo or video)
+    * @return boolean
+    */
+  private function addAlbumsToElement($id, $albums, $type)
+  {
+    if(empty($id) || empty($albums) || empty($type))
+      return false;
+
+    $hasAlbum = false;
+    $sql = "REPLACE INTO `{$this->mySqlTablePrefix}elementAlbum`(`owner`, `type`, `element`, `album`) VALUES";
+    foreach($albums as $album)
+    {
+      if(strlen($album) > 0)
+      {
+        $sql .= sprintf("('%s', '%s', '%s', '%s'),", $this->_($this->owner), $this->_($type), $this->_($id), $this->_($album));
+        $hasAlbum = true;
+      }
+    }
+
+    if(!$hasAlbum)
+      return false;
+
+    $sql = substr($sql, 0, -1);
+    $res = $this->db->execute($sql);
+
+    return $res !== false;
   }
 
   /**
@@ -937,7 +1330,7 @@ class DatabaseMySql implements DatabaseInterface
     * Insert groups into the mapping table
     *
     * @param string $id Element id (id of the photo or video)
-    * @param string $tag Tag to be added
+    * @param string $groups Groups to be added
     * @param string $type Element type (photo or video)
     * @return boolean
     */
@@ -982,46 +1375,67 @@ class DatabaseMySql implements DatabaseInterface
   /**
     * Build parts of the photos select query
     *
-    * @param array $filters filers used to perform searches
+    * @param array $filters filters used to perform searches
     * @param int $limit number of records to have returned
     * @param offset $offset starting point for records
     * @return array
     */
-  private function buildQuery($filters, $limit, $offset)
+  private function buildQuery($filters, $limit, $offset, $table)
   {
     // TODO: support logic for multiple conditions
-    $from = "FROM `{$this->mySqlTablePrefix}photo` ";
-    $where = "WHERE `{$this->mySqlTablePrefix}photo`.`owner`='{$this->owner}'";
+    $from = "FROM `{$this->mySqlTablePrefix}{$table}` ";
+    $where = "WHERE `{$this->mySqlTablePrefix}{$table}`.`owner`='{$this->owner}'";
     $groupBy = '';
-    $sortBy = 'ORDER BY dateTaken DESC';
+    $sortBy = 'ORDER BY dateSortByDay DESC';
     if(!empty($filters) && is_array($filters))
     {
       foreach($filters as $name => $value)
       {
         switch($name)
         {
+          case 'album':
+            $subquery = sprintf("`id` IN (SELECT element FROM `{$this->mySqlTablePrefix}elementAlbum` WHERE `{$this->mySqlTablePrefix}elementAlbum`.`owner`='%s' AND `type`='%s' AND `album`='%s')",
+              $this->_($this->owner), 'photo', $value);
+            $where = $this->buildWhere($where, $subquery);
+            break;
+          case 'hash':
+            $hash = $this->_($value);
+            $where = $this->buildWhere($where, "hash='{$hash}'");
+            break;
+          case 'ids':
+            $ids = (array)explode(',', $value);
+            foreach($ids as $k => $v)
+              $ids[$k] = $this->_($v);
+            $where = $this->buildWhere($where, sprintf("`id` IN ('%s')", implode("','", $ids)));
+            break;
           case 'groups':
             if(!is_array($value))
               $value = (array)explode(',', $value);
             foreach($value as $k => $v)
               $value[$k] = $this->_($v);
-            $subquery = sprintf("(id IN (SELECT element FROM `{$this->mySqlTablePrefix}elementGroup` WHERE `{$this->mySqlTablePrefix}elementGroup`.`owner`='%s' AND `type`='%s' AND `group` IN('%s')) OR permission='1')",
+            $subquery = sprintf("(`id` IN (SELECT element FROM `{$this->mySqlTablePrefix}elementGroup` WHERE `{$this->mySqlTablePrefix}elementGroup`.`owner`='%s' AND `type`='%s' AND `group` IN('%s')) OR permission='1')",
               $this->_($this->owner), 'photo', implode("','", $value));
             $where = $this->buildWhere($where, $subquery);
             break;
           case 'page':
             if($value > 1)
-            {
-              $value = min($value, 40); // 40 pages at max of 2,500 recursion limit means 100k photos
-              $offset = ($limit * $value) - $limit;
-            }
+              $offset = intval(($limit * $value) - $limit);
             break;
           case 'permission':
-            $where = $this->buildWhere($where, "permission='1'");
+            $where = $this->buildWhere($where, "`permission`='1'");
             break;
           case 'sortBy':
-            $sortBy = 'ORDER BY ' . str_replace(',', ' ', $value);
-            $field = substr($value, 0, strpos($value, ','));
+            if($value === 'dateTaken,desc')
+              $sortBy = 'ORDER BY dateSortByDay DESC';
+            elseif($value === 'dateTaken,asc')
+              $sortBy = 'ORDER BY dateSortByDay ASC';
+            elseif($value === 'dateUploaded,desc')
+              $sortBy = 'ORDER BY dateSortByDay DESC, dateUploaded ASC';
+            elseif($value === 'dateUploaded,asc')
+              $sortBy = 'ORDER BY dateSortByDay ASC, dateUploaded ASC';
+            else
+              $sortBy = 'ORDER BY ' . $this->_(str_replace(',', ' ', $value));
+            $field = $this->_(substr($value, 0, strpos($value, ',')));
             $where = $this->buildWhere($where, "{$field} is not null");
             break;
           case 'tags':
@@ -1053,6 +1467,10 @@ class DatabaseMySql implements DatabaseInterface
 
             $where = $this->buildWhere($where, sprintf("`%sphoto`.`id` IN('%s')", $this->mySqlTablePrefix, implode("','", array_keys($ids))));
             break;
+          case 'type': // type for activity
+            $value = $this->_($value);
+            $where = $this->buildWhere($where, "`type`='{$value}'");
+            break;
         }
       }
     }
@@ -1083,6 +1501,18 @@ class DatabaseMySql implements DatabaseInterface
       return "where {$add} ";
     else
       return "{$existing} and {$add} ";
+  }
+
+  /**
+    * Delete albums for an element from the mapping table
+    *
+    * @param string $id Element id
+    * @return boolean
+    */
+  private function deleteAlbumsFromElement($id)
+  {
+    $res = $this->db->execute("DELETE FROM `{$this->mySqlTablePrefix}elementAlbum` WHERE `owner`=:owner AND `type`=:type AND `element`=:album", array(':owner' => $this->owner, ':type' => 'photo', ':album' => $id));
+    return $res !== false;
   }
 
   /**
@@ -1147,9 +1577,47 @@ class DatabaseMySql implements DatabaseInterface
     * @param SimpleXMLObject $raw An action from SimpleDb in SimpleXML.
     * @return array
     */
+  private function normalizeActivity($raw)
+  {
+    $raw['data'] = json_decode($raw['data'], 1);
+    return $raw;
+  }
+
+  /**
+    * Normalizes data from MySql into schema definition
+    *
+    * @param SimpleXMLObject $raw An action from SimpleDb in SimpleXML.
+    * @return array
+    */
   private function normalizeAction($raw)
   {
-    // TODO shouldn't we require and use this method?
+    return $raw;
+  }
+
+  /**
+    * Normalizes data from MySql into schema definition
+    *
+    * @param SimpleXMLObject $raw An action from SimpleDb in SimpleXML.
+    * @return array
+    */
+  private function normalizeAlbum($raw)
+  {
+    if(empty($raw))
+      return $raw;
+
+    $raw['cover'] = null;
+    if(!empty($raw['extra']))
+    {
+      $extra = json_decode($raw['extra'], 1);
+      if(isset($extra['cover']))
+        $raw['cover'] = $extra['cover'];
+    }
+    if(empty($raw['groups']))
+      $raw['groups'] = array();
+    else
+      $raw['groups'] = (array)explode(',', $raw['groups']);
+    unset($raw['extra']);
+    return $raw;
   }
 
   /**
@@ -1161,6 +1629,9 @@ class DatabaseMySql implements DatabaseInterface
     */
   private function normalizePhoto($photo)
   {
+    if(empty($photo))
+      return $photo;
+
     $photo['appId'] = $this->config->application->appId;
 
     $versions = $this->getPhotoVersions($photo['id']);
@@ -1172,8 +1643,20 @@ class DatabaseMySql implements DatabaseInterface
       }
     }
 
-    $photo['tags'] = strlen($photo['tags']) ? (array)explode(",", $photo['tags']) : array();
-    $photo['groups'] = strlen($photo['groups']) ? (array)explode(",", $photo['groups']) : array();
+    if(isset($photo['albums']) && strlen($photo['albums']) > 0)
+      $photo['albums'] = (array)explode(',', $photo['albums']);
+    else
+      $photo['albums'] = array();
+
+    if(isset($photo['groups']) && strlen($photo['groups']) > 0)
+      $photo['groups'] = (array)explode(',', $photo['groups']);
+    else
+      $photo['groups'] = array();
+
+    if(isset($photo['tags']) && strlen($photo['tags']) > 0)
+      $photo['tags'] = (array)explode(',', $photo['tags']);
+    else
+      $photo['tags'] = array();
 
     $exif = (array)json_decode($photo['exif']);
     $extra = (array)json_decode($photo['extra']);
@@ -1181,6 +1664,27 @@ class DatabaseMySql implements DatabaseInterface
     unset($photo['exif'], $photo['extra']);
 
     return $photo;
+  }
+  /**
+    * Normalizes data from simpleDb into schema definition
+    * TODO this should eventually translate the json field
+    *
+    * @param SimpleXMLObject $raw A tag from SimpleDb in SimpleXML.
+    * @return array
+    */
+  private function normalizeResourceMap($raw)
+  {
+    if(!empty($raw['resource']))
+    {
+      $resource = json_decode($raw['resource'], 1);
+      foreach($resource as $key => $value)
+      {
+        if(!isset($raw[$key]))
+          $raw[$key] = $value;
+      }
+    }
+    unset($raw['resource']);
+    return $raw;
   }
 
   /**
@@ -1213,9 +1717,13 @@ class DatabaseMySql implements DatabaseInterface
     if(!empty($jsonParsed))
     {
       foreach($jsonParsed as $key => $value)
-        $raw[$key] = $value;
+      {
+        // perform a check to make sure we don't clobber top level elements in $raw. See #853
+        if(!isset($raw[$key]))
+          $raw[$key] = $value;
+      }
     }
-    unset($raw['extra']);
+    unset($raw['extra'], $raw['password']);
     return $raw;
   }
 
@@ -1239,6 +1747,26 @@ class DatabaseMySql implements DatabaseInterface
     if(!isset($raw['members']) || empty($raw['members']))
       $raw['members'] = array();
     return $raw;
+  }
+
+  /** Prepare activity to store in the database
+   */
+  private function prepareActivity($params)
+  {
+    if(isset($params['data']))
+      $params['data'] = json_encode($params['data']);
+
+    return $params;
+  }
+
+  /** Prepare album to store in the database
+   */
+  private function prepareAlbum($params)
+  {
+    if(isset($params['extra']))
+      $params['extra'] = json_encode($params['extra']);
+
+    return $params;
   }
 
   /** Prepare credential to store in the database
@@ -1281,9 +1809,11 @@ class DatabaseMySql implements DatabaseInterface
           $exif[$key] = $value;
           break;
         case 'extra':
+        case 'extraDropboxSource':
+          $extra[$key] = $value;
           break;
         default:
-          // skip empty lat/long Gh-313
+          // when lat/long is empty set value to null else it is stored as 0. Gh-313
           if(($key == 'latitude' || $key == 'longitude') && empty($value))
             $value = null;
           $bindings[":{$key}"] = $value;
@@ -1293,16 +1823,51 @@ class DatabaseMySql implements DatabaseInterface
     }
     if(!empty($exif))
     {
-      $bindings[":exif"] = json_encode($exif);
+      $bindings[':exif'] = json_encode($exif);
       $paramsOut['exif'] = ':exif';
     }
     if(!empty($extra))
     {
-      $bindings[":extra"] = json_encode($extra);
+      $bindings[':extra'] = json_encode($extra);
       $paramsOut['extra'] = ':extra';
+    }
+
+    if(isset($params['dateTaken']))
+    {
+      // here we seed a field for the default sort order of day descending and time ascending
+      $invHours = str_pad(intval(23-date('H', $params['dateTaken'])), 2, '0', STR_PAD_LEFT);
+      $invMins = str_pad(intval(59-date('i', $params['dateTaken'])), 2, '0', STR_PAD_LEFT);
+      $invSecs = str_pad(intval(59-date('s', $params['dateTaken'])), 2, '0', STR_PAD_LEFT);
+      $bindings[':dateSortByDay'] = sprintf('%s%s%s%s', date('Ymd', $params['dateTaken']), $invHours, $invMins, $invSecs);
+      $paramsOut['dateSortByDay'] = ':dateSortByDay';
     }
     $paramsOut['::bindings'] = $bindings;
     return $paramsOut;
+  }
+
+  /** Prepare resource map to store in the database
+   */
+  private function prepareResourceMap($params)
+  {
+    $resource = array();
+    if(isset($params['uri']))
+    {
+      $resource['uri'] = $params['uri'];
+      unset($params['uri']);
+    }
+
+    if(isset($params['method']))
+    {
+      $resource['method'] = $params['method'];
+      unset($params['method']);
+    }
+
+    if(empty($resource))
+      $params['resource'] = '';
+    else
+      $params['resource'] = json_encode($resource);
+
+    return $params;
   }
 
   /** Prepare tags to store in the database
@@ -1315,6 +1880,7 @@ class DatabaseMySql implements DatabaseInterface
       $bindings[':id'] = $params['id'];
       $params['id'] = ':id';
     }
+
     if(!empty($bindings))
     {
       $params['::bindings'] = $bindings;
@@ -1326,13 +1892,21 @@ class DatabaseMySql implements DatabaseInterface
    */
   private function prepareUser($params)
   {
-    $ret = array();
+    $ret = array('extra' => '', 'password' => '');
+    $extra = array();
     if(isset($params) && is_array($params) && !empty($params))
     {
       foreach($params as $key => $val)
-        $ret[$key] = $val;
+      {
+        if($key !== 'password')
+          $extra[$key] = $val;
+      }
+      $ret['extra'] = json_encode($extra);
+      $ret['password'] = '';
+      if(isset($params['password']))
+        $ret['password'] = $params['password'];
     }
-    return json_encode($ret);
+    return $ret;
   }
 
   /**
@@ -1362,7 +1936,7 @@ class DatabaseMySql implements DatabaseInterface
     {
       // TODO this is gonna fail if we already have the version -- hfiguiere
       // Possibly use REPLACE INTO? -- jmathai
-      $result = $this->db->execute("INSERT INTO {$this->mySqlTablePrefix}photoVersion (`id`, `owner`, `key`, `path`) VALUES(:id, :owner, :key, :value)",
+      $result = $this->db->execute("REPLACE INTO {$this->mySqlTablePrefix}photoVersion (`id`, `owner`, `key`, `path`) VALUES(:id, :owner, :key, :value)",
         array(':id' => $id, ':owner' => $this->owner, ':key' => $key, ':value' => $value));
     }
     // TODO, what type of return value should we have here -- jmathai
@@ -1426,6 +2000,41 @@ class DatabaseMySql implements DatabaseInterface
     }
     return $stmt;
   }
+
+  /**
+   * Update the mapping table for albums<->photos
+   *
+   * @param string $id ID of the photo
+   * @param array $albums Albums
+   * @return string
+   */
+  private function updateAlbumToPhotoMapping($id, $albums)
+  {
+    if(!is_array($albums))
+      $albums = (array)explode(',', $albums);
+    $this->deleteAlbumsFromElement($id, 'photo');
+    if(!empty($albums))
+      $this->addAlbumsToElement($id, $albums, 'photo');
+  }
+
+
+  /**
+   * Update the mapping table for groups<->photos
+   *
+   * @param string $id ID of the photo
+   * @param array $groups Groups
+   * @return string
+   */
+  private function updateGroupToPhotoMapping($id, $groups)
+  {
+    if(!is_array($groups))
+      $groups = (array)explode(',', $groups);
+    $this->deleteGroupsFromElement($id, 'photo');
+    if(!empty($groups))
+      $this->addGroupsToElement($id, $groups, 'photo');
+
+  }
+
 
   /**
    * Wrapper function for escaping strings for queries

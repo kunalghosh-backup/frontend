@@ -14,6 +14,7 @@ class ActionController extends BaseController
   public function __construct()
   {
     parent::__construct();
+    $this->authentication = getAuthentication();
   }
 
   /**
@@ -26,13 +27,14 @@ class ActionController extends BaseController
     */
   public function create($targetId, $targetType)
   {
-    getAuthentication()->requireAuthentication(false);
-    getAuthentication()->requireCrumb($_POST['crumb']);
+    // does not need to be owner, anyone can comment
+    $this->authentication->requireAuthentication(false);
+    $this->authentication->requireCrumb($_POST['crumb']);
     $res = $this->api->invoke(sprintf('%s.json', $this->url->actionCreate($targetId, $targetType, false)), EpiRoute::httpPost);
     $result = $res ? '1' : '0';
     // TODO: standardize messaging parameter
     if($targetType == 'photo')
-      $this->route->redirect(sprintf('%s?message=%s', $this->url->photoView($targetId, null, false), $result));
+      $this->route->redirect(sprintf('%s?c=commented', $this->url->photoView($targetId, null, false)));
     else
       $this->route->run('/error/500');
   }

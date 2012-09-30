@@ -9,6 +9,9 @@
 	<li id="nav-upload" <?php if($this->utility->isActiveTab('upload')) { ?> class="active" <?php } ?>>
 		<a href="<?php $this->url->photosUpload(); ?>">Upload</a>
 	</li>
+	<li id="nav-manage">
+		<a href="<?php $this->url->userManage(); ?>">Manage</a>
+	</li>
 <?php } ?>
 <?php if($this->user->isLoggedIn()) { ?>
 	<li id="nav-signin">
@@ -16,7 +19,6 @@
 		<div class="settings-click">
 			<?php echo $this->session->get('email'); ?>
 			<ul id="settingsbar">
-				<li id="nav-settings"><a href="<?php $this->url->userSettings(); ?>">Settings</a></li>
 				<li id="nav-logout"><a href="<?php $this->url->userLogout(); ?>">Logout</a></li>
 			<ul>
 		</div>
@@ -26,7 +28,7 @@
     <?php if($this->plugin->isActive('FacebookConnect')) { ?>
       <a class="login-click facebook" title="Signin using Facebook"><img src="<?php $this->theme->asset('image', 'facebook-icon.gif'); ?>" class="login-click facebook" hspace="5" /></a>
     <?php } ?>
-    <a class="login-click browserid" title="Signin using BrowserID"><img src="<?php $this->theme->asset('image', 'browserid.png'); ?>" class="login-click browserid" /></a>
+    <a class="login-click browserid" title="Signin using Mozilla Persona"><img src="<?php $this->theme->asset('image', 'browserid.png'); ?>" class="login-click browserid" /></a>
 	</li>
 <?php } ?>
 	<li id="nav-search" <?php if($this->utility->isActiveTab('search')) { ?> class="active" <?php } ?>>

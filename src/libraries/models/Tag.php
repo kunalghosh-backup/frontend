@@ -26,18 +26,28 @@ class Tag extends BaseModel
     return $this->db->deleteTag($id);
   }
 
+  public function getTags($filters = null)
+  {
+    return $this->db->getTags($filters);
+  }
+
   /**
     * Updates count values in tags when an object is updates.
     * Keeps track of # of objects tagged in the Tag object itself.
-    * Both params are a full set of tags before and after the update.
+    * First two params are a full set of tags before and after the update.
+    * Generates an array of what tags to increment and decrement
+    * Called by $this->updateTagCounts
     *
     * @param array $existingTags The tags previously on the object.
     * @param array $updatedTags The tags currently being updated on the object.
     * @param int $permission Permission of the photo.
     * @return boolean
     */
-  public function updateTagCounts($existingTags, $updatedTags, $permission, $priorPermission)
+  public function getUpdateTagCountValues($existingTags, $updatedTags, $permission, $priorPermission)
   {
+    // make sure tags are in array form
+    $existingTags = (array)$existingTags;
+    $updatedTags = (array)$updatedTags;
     // we increment public photos by 1 only if they are public
     // if the privacy changes then we add or remove from the increment value
     $publicIncrement = ($permission == 1) ? 1 : 0;
@@ -51,6 +61,7 @@ class Tag extends BaseModel
     }
 
     // here we determine which arrays are new, deleted and already existing
+    // if the tag was removed then we set to -1, +1 if added and 0 if only the privacy changed
     $tagsToDecrement = array_diff($existingTags, $updatedTags);
     $tagsToIncrement = array_diff($updatedTags, $existingTags);
     $tagsToMutateForPrivacy = array_intersect($existingTags, $updatedTags);
@@ -62,6 +73,8 @@ class Tag extends BaseModel
     foreach($tagsToMutateForPrivacy as $tg) // these already exist but we may need to update counts if the privacy changed
       $tagsToUpdate[$this->sanitize($tg)] = 0;
 
+    // get all tags (permission = 0 means all)
+    // store only the tags which are going to be updated from the above loops
     $tagsFromDb = array();
     $allTags = $this->db->getTags(array('permission' => 0));
     if(!empty($allTags))
@@ -93,6 +106,7 @@ class Tag extends BaseModel
       // unset so we can later loop over tags which didn't already exist
       unset($tagsToUpdate[$thisTag]);
     }
+
     // these are new tags
     foreach($tagsToUpdate as $tag => $count)
     {
@@ -100,8 +114,22 @@ class Tag extends BaseModel
         $this->delete($tag);
       $updatedTags[] = array('id' => $tag, 'countPrivate' => $count, 'countPublic' => ($count*$publicIncrement));
     }
+    
+    return $updatedTags;
+  }
 
-    return $this->db->postTags($updatedTags);
+  /**
+    * First two params are a full set of tags before and after the update.
+    *
+    * @param array $existingTags The tags previously on the object.
+    * @param array $updatedTags The tags currently being updated on the object.
+    * @param int $permission Permission of the photo.
+    * @return boolean
+    */
+  public function updateTagCounts($existingTags, $updatedTags, $permission, $priorPermission)
+  {
+    $tagsToUpdate = $this->getUpdateTagCountValues($existingTags, $updatedTags, $permission, $priorPermission);
+    return $this->db->postTags($tagsToUpdate);
   }
 
   /**
@@ -143,13 +171,13 @@ class Tag extends BaseModel
 
   public function sanitize($tag)
   {
-    return trim(preg_replace('/,/', '', $tag));
+    return trim(preg_replace('/,/', '-', $tag));
   }
 
   public function sanitizeTagsAsString($tags)
   {
     $tagsArray = preg_split('/\s*,\s*/', trim($tags), -1, PREG_SPLIT_NO_EMPTY);
-    $tagsArray = array_unique($tagsArray);
+    $tagsArray = $this->deduplicate($tagsArray);
     foreach($tagsArray as $key => $val)
       $tagsArray[$key] = $this->sanitize($val);
 
@@ -174,5 +202,23 @@ class Tag extends BaseModel
     if($json)
       $params['params'] = json_encode($json);
     return $params;
+  }
+
+  private function deduplicate($tags)
+  {
+    $table = array();
+    foreach($tags as $tag)
+    {
+      $key = strtolower($tag);
+      if(!isset($table[$key]))
+        $table[$key] = array();
+      $table[$key][] = $tag;
+    }
+
+    $retval = array();
+    foreach($table as $tags)
+      $retval[] = min($tags);
+
+    return $retval;
   }
 }
