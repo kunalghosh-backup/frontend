@@ -1,15 +1,4 @@
 <?php
-$paths = (array)explode(PATH_SEPARATOR, ini_get('include_path'));
-foreach($paths as $path)
-{
-  if(file_exists("{$path}/vfsStream/vfsStream.php"))
-    require_once 'vfsStream/vfsStream.php';
-}
-$baseDir = dirname(dirname(dirname(dirname(__FILE__))));
-require_once sprintf('%s/tests/helpers/init.php', $baseDir);
-require_once sprintf('%s/libraries/adapters/FileSystem.php', $baseDir);
-require_once sprintf('%s/libraries/adapters/FileSystemLocal.php', $baseDir);
-
 /*class FileSystemS3Override extends FileSystemS3
 {
   public function __construct($config = null, $params = null)
@@ -34,8 +23,8 @@ class FileSystemLocalTest extends PHPUnit_Framework_TestCase
     if(class_exists('vfsStream'))
     {
       vfsStreamWrapper::register();
-      vfsStreamWrapper::setRoot(new vfsStreamDirectory('testDir'));
-      $this->root = vfsStream::url('testDir');
+      vfsStreamWrapper::setRoot(new vfsStreamDirectory('fsDir'));
+      $this->root = vfsStream::url('fsDir');
       $this->assertFalse(vfsStreamWrapper::getRoot()->hasChild($this->file), 'Init validation that vfs file does not exist failed');
     }
     $this->vfsPath = sprintf('%s%s', $this->root, $this->photo['path10x10']);
@@ -68,7 +57,7 @@ class FileSystemLocalTest extends PHPUnit_Framework_TestCase
   /**
    * @depends testValidateVfsFunctionSuccess
    */
-  public function testDeletePhotoSuccess($mockExists)
+  public function testDeletePhotoSuccess()
   {
     file_put_contents($this->vfsPath, 'foo');
     // now check if the virtual fs has the file

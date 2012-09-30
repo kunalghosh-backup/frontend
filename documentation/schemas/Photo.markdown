@@ -1,6 +1,5 @@
-Documentation
+Schema for a Photo object
 =======================
-
 
 ----------------------------------------
 
@@ -26,6 +25,7 @@ This includes EXIF information from the photo, tags and URLs to all versions of 
       size: (int), // in kb
       width: (int),
       height: (int),
+      rotation: (int),
       exifOrientation: (int), // degrees
       exifCameraMake: (string),
       exifCameraModel: (string),
@@ -76,6 +76,7 @@ This includes EXIF information from the photo, tags and URLs to all versions of 
   * size, Size of the photo rounded to the nearest Kilobyte
   * width, Width of the photo in pixels
   * height, Height of the photo in pixels
+  * rotation, Degress the user has rotated the photo (0, 90, 180, 270)
   * exifOrientation, Rotation of the camera in degrees
   * exifCameraMake, Camera make, i.e. Canon
   * exifCcameraModel, Camera model, i.e. EOS Rebel
@@ -105,6 +106,6 @@ This includes EXIF information from the photo, tags and URLs to all versions of 
   * pathBase, The URL of the base version of the photo, used for photo generation
   * pathWxH, A pseudo key which represents any resized version of a photo and it's URL
 
-[User]: User.markdown
-[Photo]: Photo.markdown
-[Action]: Action.markdown
+[User]: http://theopenphotoproject.org/documentation/schemas/User
+[Photo]: http://theopenphotoproject.org/documentation/schemas/Photo
+[Action]: http://theopenphotoproject.org/documentation/schemas/Action

@@ -8,9 +8,31 @@
  */
 class Photo extends BaseModel
 {
-  public function __construct()
+  public function __construct($params = null)
   {
     parent::__construct();
+    if(isset($params['utility']))
+      $this->utility = $params['utility'];
+    else
+      $this->utility = new Utility;
+
+    if(isset($params['url']))
+      $this->url = $params['url'];
+    else
+      $this->url = new Url;
+
+    if(isset($params['image']))
+      $this->image = $params['image'];
+    else
+      $this->image = getImage();
+
+    if(isset($params['user']))
+      $this->user = $params['user'];
+    else
+      $this->user = new User;
+
+    if(isset($params['config']))
+      $this->config = $params['config'];
   }
 
   /**
@@ -25,9 +47,8 @@ class Photo extends BaseModel
     */
   public function addApiUrls($photo, $sizes, $protocol=null)
   {
-    $utilityObj = new Utility;
     if($protocol === null)
-      $protocol = $utilityObj->getProtocol(false);
+      $protocol = $this->utility->getProtocol(false);
 
     foreach($sizes as $size)
     {
@@ -38,13 +59,21 @@ class Photo extends BaseModel
       if(strstr($fragment, 'xCR') === false)
       {
         $dimensions = $this->getRealDimensions($photo['width'], $photo['height'], $options['width'], $options['height']);
-        $photo["photo{$fragment}"] = array($path, $dimensions['width'], $dimensions['height']);
+        $photo["photo{$fragment}"] = array($path, intval($dimensions['width']), intval($dimensions['height']));
       }
       else
       {
-        $photo["photo{$fragment}"] = array($path, $options['width'], $options['height']);
+        $photo["photo{$fragment}"] = array($path, intval($options['width']), intval($options['height']));
       }
     }
+
+    $photo['pathBase'] = $this->generateUrlBase($photo);
+    // the original needs to be conditionally included
+    if($this->config->site->allowOriginalDownload == 1 || $this->user->isOwner())
+      $photo['pathOriginal'] = $this->generateUrlOriginal($photo);
+    elseif(isset($photo['pathOriginal']))
+      unset($photo['pathOriginal']);
+
     $photo['url'] = $this->getPhotoViewUrl($photo);
     return $photo;
   }
@@ -61,9 +90,34 @@ class Photo extends BaseModel
     // TODO, validation
     // TODO, do not delete record from db - mark as deleted
     $photo = $this->db->getPhoto($id);
+    if(!$photo)
+      return false;
+
     $fileStatus = $this->fs->deletePhoto($photo);
     $dataStatus = $this->db->deletePhoto($photo);
     return $fileStatus && $dataStatus;
+  }
+
+  /**
+    * Output the contents of the original photo
+    * Gets a file pointer from the adapter
+    *   which can be a local or remote file
+    *
+    * @param array $photo photo object as returned from the API (not the DB)
+    * @return 
+    */
+  public function download($photo)
+  {
+    $fp = $this->fs->downloadPhoto($photo);
+    if(!$fp)
+      return false;
+
+    header('Content-Description: File Transfer');
+    header('Content-Disposition: attachment; filename='.$photo['filenameOriginal']);
+    while($buffer = fgets($fp, 4096))
+      echo $buffer;
+
+    fclose($fp);
   }
 
   /**
@@ -89,7 +143,7 @@ class Photo extends BaseModel
     * @param string $options Options for the photo such as crop (CR) and greyscale (BW)
     * @return string
     */
-  public function generateFragment($width, $height, $options)
+  public function generateFragment($width, $height, $options = null)
   {
     $fragment = "{$width}x{$height}";
     if(!empty($options))
@@ -111,12 +165,33 @@ class Photo extends BaseModel
     */
   public function generate($id, $hash, $width, $height, $options = null)
   {
-    if(!$this->isValidateHash($hash, $id, $width, $height, $options))
+    if(!$this->isValidHash($hash, $id, $width, $height, $options))
       return false;
 
     $photo = $this->db->getPhoto($id);
+    if(!$photo)
+    {
+      $this->logger->crit('Could not get photo from db in generate method');
+      return false;
+    }
+
     $filename = $this->fs->getPhoto($photo['pathBase']);
-    $image = getImage($filename);
+    if(!$filename)
+    {
+      $this->logger->crit('Could not get photo from fs in generate method');
+      return false;
+    }
+
+    try
+    {
+      $this->image->load($filename);
+    }
+    catch(OPInvalidImageException $e)
+    {
+      $this->logger->crit('Could not get image from image adapter in generate method', $e);
+      return false;
+    }
+
     $maintainAspectRatio = true;
     if(!empty($options))
     {
@@ -126,7 +201,7 @@ class Photo extends BaseModel
         switch($option)
         {
           case 'BW':
-            $image->greyscale();
+            $this->image->greyscale();
             break;
           case 'CR':
             $maintainAspectRatio = false;
@@ -135,9 +210,8 @@ class Photo extends BaseModel
       }
     }
 
-    $image->scale($width, $height, $maintainAspectRatio);
-
-    $image->write($filename);
+    $this->image->scale($width, $height, $maintainAspectRatio);
+    $this->image->write($filename);
     $customPath = $this->generateCustomUrl($photo['pathBase'], $width, $height, $options);
     $key = $this->generateCustomKey($width, $height, $options);
     $resFs = $this->fs->putPhoto($filename, $customPath);
@@ -174,11 +248,14 @@ class Photo extends BaseModel
     * @param string $param1 any parameter value
     * ...
     * @param string $paramN any parameter value
-    * @return string
+    * @return mixed string on success, FALSE on error
     */
   public function generateHash(/*$args1, $args2, ...*/)
   {
     $args = func_get_args();
+    if(count($args) === 0)
+      return false;
+
     foreach($args as $k => $v)
     {
       if(strlen($v) == 0)
@@ -191,17 +268,46 @@ class Photo extends BaseModel
   /**
     * Generates the default paths given a photo name.
     * These paths will also be the initial versions of the photo that are stored in the file system and database.
+    * We need the prefix for the original to be different from the base
+    * A random number between 1,000,000 and 9,999,999 is sufficient when paired with the filename
     *
     * @param string $photoName File name of the photo
     * @return array
     */
   public function generatePaths($photoName)
   {
-    $photoName = time() . '-' . preg_replace('/[^a-zA-Z0-9.-_]/', '-', $photoName);
+    $baseName = dechex(rand(1000000,9999999)) . '-' . preg_replace('/[^a-zA-Z0-9.-_]/', '-', $photoName);
+    $originalName = uniqid() . '-' . preg_replace('/[^a-zA-Z0-9.-_]/', '-', $photoName);
     return array(
-      'pathOriginal' => sprintf('/original/%s/%s', date('Ym'), $photoName),
-      'pathBase' => sprintf('/base/%s/%s', date('Ym'), $photoName)
+      'pathOriginal' => sprintf('/original/%s/%s', date('Ym'), $originalName),
+      'pathBase' => sprintf('/base/%s/%s', date('Ym'), $baseName)
     );
+  }
+
+  /**
+    * Obtain a public URL for the base photo.
+    *
+    * @param array $photo The photo object as returned from the database.
+    * @param string $protocol Protocol for the URL
+    * @return mixed string URL on success, FALSE on failure
+    */
+  public function generateUrlBase($photo, $protocol = 'http')
+  {
+    return "{$protocol}://{$photo['host']}{$photo['pathBase']}";
+  }
+
+  /**
+    * Obtain a public URL for the original photo.
+    * If the user is the owner we return the URL to the static asset.
+    * If the user is logged in but not the owner we route through the API host.
+    *
+    * @param array $photo The photo object as returned from the database.
+    * @param string $protocol Protocol for the URL
+    * @return mixed string URL on success, FALSE on failure
+    */
+  public function generateUrlOriginal($photo, $protocol = 'http')
+  {
+    return "{$protocol}://{$photo['host']}{$photo['pathOriginal']}";
   }
 
   /**
@@ -213,11 +319,13 @@ class Photo extends BaseModel
     * @param int $width The width of the requested photo.
     * @param int $height The height of the requested photo.
     * @param string $options Optional options to be applied on the photo
+    * @param string $protocol Protocol for the URL
     * @return mixed string URL on success, FALSE on failure
     */
   public function generateUrlPublic($photo, $width, $height, $options = null, $protocol = 'http')
   {
     $key = $this->generateCustomKey($width, $height, $options);
+
     if(isset($photo[$key]))
       return "{$protocol}://{$photo['host']}{$photo[$key]}";
     elseif(isset($photo['id']))
@@ -310,14 +418,14 @@ class Photo extends BaseModel
     $parsedDate = $this->parseExifDate($exif, 'DateTimeOriginal');
     if($parsedDate === false) 
     {
-        $parsedDate = $this->parseExifDate($exif, 'DateTime');    
-	if($parsedDate === false)
-	{
-	    if(array_key_exists('FileDateTime', $exif))
-	        $parsedDate = $exif['FileDateTime'];
-            else
-                $parsedDate = time();
-        }
+      $parsedDate = $this->parseExifDate($exif, 'DateTime');    
+      if($parsedDate === false)
+      {
+        if(array_key_exists('FileDateTime', $exif))
+          $parsedDate = $exif['FileDateTime'];
+        else
+          $parsedDate = time();
+      }
     }
     $dateTaken = $parsedDate;    
 
@@ -339,6 +447,59 @@ class Photo extends BaseModel
     $exif_array['focalLength'] = $this->frac2Num(@$exif['FocalLength']);
 
     return $exif_array;
+  }
+
+  public function transform($id, $transformations)
+  {
+    $photo = $this->db->getPhoto($id);
+    if(!$photo)
+    {
+      $this->logger->crit('Could not get photo from db in transform method');
+      return false;
+    }
+
+    $filename = $this->fs->getPhoto($photo['pathBase']);
+    if(!$filename)
+    {
+      $this->logger->crit('Could not get photo from fs in transform method');
+      return false;
+    }
+
+    try
+    {
+      $this->image->load($filename);
+    }
+    catch(OPInvalidImageException $e)
+    {
+      $this->logger->crit('Could not get image from image adapter in transform method', $e);
+      return false;
+    }
+
+    // update the file on the file system and update the db with the path
+    $paths = $this->generatePaths($photo['filenameOriginal']);
+    $updateFields = array('pathBase' => $paths['pathBase']);
+    foreach($transformations as $trans => $value)
+    {
+      switch($trans)
+      {
+        case 'rotate':
+          $this->image->rotate($value);
+          $updateFields['rotation'] = intval(($photo['rotation'] + $value) % 360);
+          break;
+      }
+    }
+
+    $updateFs = $this->fs->putPhoto($filename, $paths['pathBase']);
+    $updateDb = $this->db->postPhoto($id, $updateFields);
+
+    unlink($filename);
+
+    // purge photoVersions
+    $delVersionsResp = $this->db->deletePhotoVersions($photo);
+    if(!$delVersionsResp)
+      return false;
+    
+    return true;
   }
 
   /**
@@ -366,6 +527,73 @@ class Photo extends BaseModel
     return $id;
   }
 
+  public function replace($id, $localFile, $name)
+  {
+    $attributes = array();
+    $resp = $this->createAndStoreBaseAndOriginal($name, $localFile);
+    $paths = $resp['paths'];
+    if($resp['status'])
+    {
+      $this->logger->info("Photo ({$id}) successfully stored on the file system (replacement)");
+      $exif = $this->readExif($localFile);
+      $iptc = $this->readIptc($localFile);
+      $defaults = array('title', 'description', 'tags', 'latitude', 'longitude');
+      $attributes = $paths;
+      foreach($iptc as $iptckey => $iptcval)
+      {
+        if(empty($iptcval))
+          continue;
+
+        if($iptckey == 'tags')
+        {
+          $iptcval = implode(',', $iptcval);
+        }
+        $attributes[$iptckey] = $iptcval;
+      }
+      foreach($defaults as $default)
+      {
+        if(!isset($attributes[$default]))
+          $attributes[$default] = null;
+      }
+      $attributes['hash'] = sha1_file($localFile);
+      $attributes['size'] = intval(filesize($localFile)/1024);
+
+      $exifParams = array('width' => 'width', 'height' => 'height', 'exifCameraMake' => 'exifCameraMake', 'exifCameraModel' => 'exifCameraModel', 
+        'FNumber' => 'exifFNumber', 'exposureTime' => 'exifExposureTime', 'ISO' => 'exifISOSpeed', 'focalLength' => 'exifFocalLength', 'latitude' => 'latitude', 'longitude' => 'longitude');
+      foreach($exifParams as $paramName => $mapName)
+      {
+        if(isset($exif[$paramName]))
+          $attributes[$mapName] = $exif[$paramName];
+      }
+
+      $exiftran = $this->config->modules->exiftran;
+      if(is_executable($exiftran))
+        exec(sprintf('%s -ai %s', $exiftran, escapeshellarg($localFile)));
+      
+      $photo = $this->db->getPhoto($id);
+
+      // purge photoVersions
+      $delVersionsResp = $this->db->deletePhotoVersions($photo);
+      if(!$delVersionsResp)
+        return false;
+      // delete all photos
+      $delFilesResp = $this->fs->deletePhoto($photo);
+      if(!$delFilesResp)
+        return false;
+      // update photo paths / hash
+      $updPathsResp = $this->db->postPhoto($id, $attributes);
+
+      unlink($localFile);
+      unlink($resp['localFileCopy']);
+
+      if($updPathsResp)
+        return true;
+    }
+
+    $this->logger->warn('Could not upload files for replacement');
+    return false;
+  }
+
   /**
     * Uploads a new photo to the remote file system and database.
     *
@@ -376,40 +604,26 @@ class Photo extends BaseModel
     */
   public function upload($localFile, $name, $attributes = array())
   {
-    $userObj = new User;
-    $id = $userObj->getNextId('photo');
+    // check if file type is valid
+    if(!$this->utility->isValidMimeType($localFile))
+    {
+      $this->logger->warn(sprintf('Invalid mime type for %s', $localFile));
+      return false;
+    }
+
+    $id = $this->user->getNextId('photo');
     if($id === false)
     {
       $this->logger->crit('Could not fetch next photo ID');
       return false;
     }
     $tagObj = new Tag;
+    $filenameOriginal = $name;
+
     $attributes = $this->whitelistParams($attributes);
-    $paths = $this->generatePaths($name);
-    $exiftran = $this->config->modules->exiftran;
-    if(is_executable($exiftran))
-      exec(sprintf('%s -ai %s', $exiftran, escapeshellarg($localFile)));
-
-    // resize the base image before uploading
-    $localFileCopy = "{$localFile}-copy";
-    $this->logger->info("Making a local copy of the uploaded image. {$localFile} to {$localFileCopy}");
-    copy($localFile, $localFileCopy);
-
-    $baseImage = getImage($localFileCopy);
-    if(!$baseImage)
-    {
-      $this->logger->warn('Could not load image, possibly an invalid image file.');
-      return false;
-    }
-    $baseImage->scale($this->config->photos->baseSize, $this->config->photos->baseSize);
-    $baseImage->write($localFileCopy);
-    $uploaded = $this->fs->putPhotos(
-      array(
-        array($localFile => $paths['pathOriginal']),
-        array($localFileCopy => $paths['pathBase'])
-      )
-    );
-    if($uploaded)
+    $resp = $this->createAndStoreBaseAndOriginal($name, $localFile);
+    $paths = $resp['paths'];
+    if($resp['status'])
     {
       $this->logger->info("Photo ({$id}) successfully stored on the file system");
       $exif = $this->readExif($localFile);
@@ -417,6 +631,9 @@ class Photo extends BaseModel
       $defaults = array('title', 'description', 'tags', 'latitude', 'longitude');
       foreach($iptc as $iptckey => $iptcval)
       {
+        if(empty($iptcval))
+          continue;
+
         if($iptckey == 'tags')
         {
           $iptcval = implode(',', $iptcval);
@@ -460,7 +677,7 @@ class Photo extends BaseModel
       $attributes = array_merge(
         $this->getDefaultAttributes(),
         array(
-          'hash' => sha1_file($localFile),
+          'hash' => sha1_file($localFile), // fallback if not in $attributes
           'size' => intval(filesize($localFile)/1024),
           'exifCameraMake' => @$exif['cameraMake'],
           'exifCameraModel' => @$exif['cameraModel'],
@@ -468,6 +685,7 @@ class Photo extends BaseModel
           'exifExposureTime' => @$exif['exposureTime'],
           'exifISOSpeed' => @$exif['ISO'],
           'exifFocalLength' => @$exif['focalLength'],
+          'filenameOriginal' => $filenameOriginal,
           'width' => @$exif['width'],
           'height' => @$exif['height'],
           'dateTaken' => $dateTaken,
@@ -485,7 +703,7 @@ class Photo extends BaseModel
       );
       $stored = $this->db->putPhoto($id, $attributes);
       unlink($localFile);
-      unlink($localFileCopy);
+      unlink($resp['localFileCopy']);
       if($stored)
       {
         if(isset($attributes['tags']) && !empty($attributes['tags']))
@@ -519,6 +737,9 @@ class Photo extends BaseModel
   {
     $fragment = $this->generateFragment($width, $height, $options);
     $customPath = preg_replace('#^/base/#', '/custom/', $basePath);
+    if(stristr($customPath, '.') === false)
+      return "{$customPath}_{$fragment}.jpg";
+
     $customName = substr($customPath, 0, strrpos($customPath, '.'));
     return "{$customName}_{$fragment}.jpg";
   }
@@ -547,9 +768,7 @@ class Photo extends BaseModel
     */
   private function getPhotoViewUrl($photo)
   {
-    $utilityObj = new Utility;
-    $urlObj = new Url;
-    return sprintf('%s://%s%s', $utilityObj->getProtocol(false), $_SERVER['HTTP_HOST'], $urlObj->photoView($photo['id'], null, false));
+    return sprintf('%s://%s%s', $this->utility->getProtocol(false), $_SERVER['HTTP_HOST'], $this->url->photoView($photo['id'], null, false));
   }
 
   /**
@@ -561,7 +780,7 @@ class Photo extends BaseModel
     * @param $paramN One of the options
     * @return boolean
     */
-  private function isValidateHash(/*$hash, $args1, $args2, ...*/)
+  private function isValidHash(/*$hash, $args1, $args2, ...*/)
   {
     $args = func_get_args();
     foreach($args as $k => $v)
@@ -604,6 +823,33 @@ class Photo extends BaseModel
     return $flip * ($degrees + $minutes / 60 + $seconds / 3600);
   }
 
+  private function createAndStoreBaseAndOriginal($name, $localFile)
+  {
+    $paths = $this->generatePaths($name);
+
+    // resize the base image before uploading
+    $localFileCopy = "{$localFile}-copy";
+    $this->logger->info("Making a local copy of the uploaded image. {$localFile} to {$localFileCopy}");
+    copy($localFile, $localFileCopy);
+    
+    $baseImage = $this->image->load($localFileCopy);
+    if(!$baseImage)
+    {
+      $this->logger->warn('Could not load image, possibly an invalid image file.');
+      return false;
+    }
+    $baseImage->scale($this->config->photos->baseSize, $this->config->photos->baseSize);
+    $baseImage->write($localFileCopy);
+    $uploaded = $this->fs->putPhotos(
+      array(
+        array($localFile => $paths['pathOriginal']),
+        array($localFileCopy => $paths['pathBase'])
+      )
+    );
+
+    return array('status' => $uploaded, 'paths' => $paths, 'localFileCopy' => $localFileCopy);;
+  }
+
 
   /**
     * Reads IPTC data from a photo.
@@ -644,10 +890,10 @@ class Photo extends BaseModel
   private function whitelistParams($attributes)
   {
     $returnAttrs = array();
-    $matches = array('id' => 1,'host' => 1,'appId' => 1,'title' => 1,'description' => 1,'key' => 1,'hash' => 1,'tags' => 1,'size' => 1,'width' => 1,'photo'=>1,
-      'height' => 1,'altitude' => 1, 'latitude' => 1,'longitude' => 1,'views' => 1,'status' => 1,'permission' => 1,'groups' => 1,'license' => 1,
-      'dateTaken' => 1, 'dateUploaded' => 1);
-    $patterns = array('exif.*' => 1,'date.*' => 1,'path.*' => 1);
+    $matches = array('id' => 1,'host' => 1,'appId' => 1,'title' => 1,'description' => 1,'key' => 1,'hash' => 1,'tags' => 1,'size' => 1,'photo'=>1,'height' => 1,
+      'rotation'=>1,'altitude' => 1, 'latitude' => 1,'longitude' => 1,'views' => 1,'status' => 1,'permission' => 1,'albums'=>1,'groups' => 1,'license' => 1,
+      'dateTaken' => 1, 'dateUploaded' => 1, 'filenameOriginal' => 1 /* TODO remove in 1.5.0, only used for upgrade */);
+    $patterns = array('exif.*','date.*','path.*','extra.*');
     foreach($attributes as $key => $val)
     {
       if(isset($matches[$key]))

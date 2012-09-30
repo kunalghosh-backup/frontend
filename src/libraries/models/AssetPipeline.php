@@ -15,9 +15,12 @@ class AssetPipeline
   const combined = 'c';
   protected $assets, $assetsRel, $docroot, $cacheDir, $mode;
 
-  public function __construct()
+  public function __construct($params = null)
   {
-    $config = getConfig()->get();
+    if(isset($params['config']))
+      $config = $params['config'];
+    else
+      $config = getConfig()->get();
     $this->docroot = $config->paths->docroot;
     $this->cacheDir = sprintf('%s/assets/cache', $this->docroot);;
     $this->assets = $this->assetsRel = array('js' => array(), 'css' => array());
@@ -81,6 +84,12 @@ class AssetPipeline
     return $url;
   }
 
+  public function setMode($mode)
+  {
+    $this->mode = $mode;
+    return $this;
+  }
+
   private function addAsset($src, $type)
   {
     // verify this file exists
@@ -97,17 +106,4 @@ class AssetPipeline
     $pathToFile = str_replace($this->docroot, '', dirname($file));
     return str_replace('../', "{$pathToFile}/../", $contents);
   }
-}
-
-function getAssetPipeline($new = false)
-{
-  if($new)
-    return new AssetPipeline;
-
-  static $assetPipeline;
-  if($assetPipeline)
-    return $assetPipeline;
-
-  $assetPipeline = new AssetPipeline;
-  return $assetPipeline;
 }

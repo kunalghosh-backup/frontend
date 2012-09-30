@@ -4,6 +4,7 @@ class EpiApi
   private static $instance;
   private $routes = array();
   private $regexes= array();
+  private $invoking = false;
 
   const internal = 'private';
   const external = 'public';
@@ -31,6 +32,7 @@ class EpiApi
 
   public function invoke($route, $httpMethod = EpiRoute::httpGet, $params = array())
   {
+    $this->invoking = true;
     $routeDef = $this->getRoute($route, $httpMethod);
 
     // this is ugly but required if internal and external calls are to work
@@ -49,7 +51,13 @@ class EpiApi
     foreach($tmps as $type => $value)
       $GLOBALS[$type] = $value;
 
+    $this->invoking = false;
     return $retval;
+  }
+
+  public function isInvoking()
+  {
+    return $this->invoking;
   }
 
   /**
@@ -88,7 +96,7 @@ class EpiApi
         EpiException::raise(new EpiException('Could not call ' . json_encode($def) . " for route {$regex}"));
       }
     }
-    EpiException::raise(new EpiException("Could not find route {$this->route} from {$_SERVER['REQUEST_URI']}"));
+    EpiException::raise(new EpiException("Could not find route ({$route}) from ({$_SERVER['REQUEST_URI']})"));
   }
 
   /**

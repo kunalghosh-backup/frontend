@@ -7,15 +7,18 @@
  */
 class Plugin extends BaseModel
 {
-  private $pluginDir, $activePlugins = array(), $pluginInstances = array();
+  protected $pluginDir, $activePlugins = array(), $pluginInstances = array(), $data = array();
 
-  public function __construct()
+  public function __construct($params = null)
   {
     parent::__construct();
-    $paths = $this->config->paths;
-    if(isset($paths->plugins))
-      $this->pluginDir = $paths->plugins;
-    $this->registerAll();
+    if(isset($params['config']))
+      $this->config = $params['config'];
+    else
+      $this->config = getConfig()->get();
+
+    if(isset($this->config->paths->plugins))
+      $this->pluginDir = $this->config->paths->plugins;
   }
 
   public function getActive()
@@ -47,12 +50,28 @@ class Plugin extends BaseModel
     $plugins = array();
     while (($name = $dir->read()) !== false)
     {
-      if(is_dir(sprintf('%s/%s', $this->config->paths->plugins, $name)) || substr($name, 0, 1) == '.')
+      if(is_dir(sprintf('%s/%s', $this->pluginDir, $name)) || substr($name, 0, 1) == '.')
         continue;
 
       $plugins[] = preg_replace('/Plugin$/', '', basename($name, '.php'));
     }
+    sort($plugins);
     return $plugins;
+  }
+
+  public function getConfigObj()
+  {
+    return getConfig();
+  }
+
+  public function getData($key = null)
+  {
+    if($key === null)
+      return $this->data;
+    elseif(array_key_exists($key, $this->data))
+      return $this->data[$key];
+    else
+      return null;
   }
 
   public function invoke($action, $params = null)
@@ -63,6 +82,24 @@ class Plugin extends BaseModel
       $output .= (string)$instance->$action($params);
     }
 
+    if($output != '')
+      echo $output;
+  }
+
+  /* to be used with invokeSingle() */
+  public function deferInvocation($action, $params = null)
+  {
+    $retval = array();
+    foreach($this->pluginInstances as $instance)
+    {
+      $retval[] = array($instance, $action, $params);
+    }
+    return $retval;
+  }
+
+  public function invokeSingle($invocationDef)
+  {
+    $output = (string)$invocationDef[0]->$invocationDef[1]($invocationDef[2]);
     if($output != '')
       echo $output;
   }
@@ -78,16 +115,24 @@ class Plugin extends BaseModel
     return false;
   }
 
+  public function load()
+  {
+    $this->registerAll();
+    $this->registerRoutes();
+    return $this;
+  }
+
   public function loadConf($plugin)
   {
     $inst = $this->getInstance($plugin);
     if(!$inst)
       return null;
 
+    $configObj = $this->getConfigObj();
     $conf = $inst->defineConf();
-    if(file_exists($confPath = sprintf('%s/plugins/%s.%s.ini', $this->config->paths->userdata, $_SERVER['HTTP_HOST'], $plugin)))
+    if($configObj->exists($confPath = sprintf('%s/plugins/%s.%s.ini', $this->config->paths->userdata, $_SERVER['HTTP_HOST'], $plugin)))
     {
-      $parsedConf = parse_ini_file($confPath);
+      $parsedConf = parse_ini_string($configObj->getString($confPath), true);
       foreach($conf as $name => $tmp)
       {
         if(isset($parsedConf[$name]))
@@ -98,14 +143,25 @@ class Plugin extends BaseModel
     return $conf;
   }
 
+  public function setData($key, $value)
+  {
+    $this->data[$key] = $value;
+  }
+
   public function writeConf($plugin, $string)
   {
+    $configObj = $this->getConfigObj();
     $pluginDir = sprintf('%s/plugins', $this->config->paths->userdata);
-    if(!is_dir($pluginDir))
-      mkdir($pluginDir);
 
     if($string !== false)
-      return file_put_contents(sprintf('%s/%s.%s.ini', $pluginDir, $_SERVER['HTTP_HOST'], $plugin), $string);
+    {
+      $pluginConfFile = sprintf('%s/%s.%s.ini', $pluginDir, $_SERVER['HTTP_HOST'], $plugin);
+      $fileCreated = $configObj->write($pluginConfFile, $string) !== false;
+      if(!$fileCreated)
+        $this->logger->warn(sprintf('Could not create file at %s', $pluginConfFile));
+
+      return $fileCreated;
+    }
     return false;
   }
 
@@ -131,16 +187,28 @@ class Plugin extends BaseModel
       require sprintf('%s/%sPlugin.php', $this->pluginDir, $plugin);
       $classname = "{$plugin}Plugin";
       $this->pluginInstances[] = new $classname;
+      $this->logger->info(sprintf('Registering plugin %s', $plugin));
     }
   }
-}
 
-function getPlugin()
-{
-  static $plugin;
-  if($plugin)
-    return $plugin;
+  private function registerRoutes()
+  {
+    foreach($this->pluginInstances as $instance)
+    {
+      $routes = $instance->defineRoutes();
+      if(empty($routes))
+        continue;
 
-  $plugin = new Plugin;
-  return $plugin;
+      foreach($routes as $name => $route)
+      {
+        // this logic is duplicated in PluginBase::getRouteUrl
+        $class = get_class($instance);
+        $name = preg_replace('/Plugin$/', '', $class);
+        $method = strtolower($route[0]);
+
+        $routePath = sprintf('/plugin/%s(%s)', $name, $route[1]);
+        $this->route->$method($routePath, array($class, 'routeHandler'));
+      }
+    }
+  }
 }

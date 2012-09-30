@@ -95,7 +95,7 @@ The response is in a standard [response envelope](http://theopenphotoproject.org
     }
 
 
-[Tag]: ../schemas/Tag.markdown
+[Tag]: http://theopenphotoproject.org/documentation/schemas/Tag
 [purpose]: #purpose
 [endpoint]: #endpoint
 [parameters]: #parameters
@@ -104,4 +104,4 @@ The response is in a standard [response envelope](http://theopenphotoproject.org
 [example-php]: #example-php
 [response]: #response
 [sample]: #sample
-[openphoto-php]: https://github.com/openphoto/openphoto-php
+[openphoto-php]: https://github.com/photo/openphoto-php

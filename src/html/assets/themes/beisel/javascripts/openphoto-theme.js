@@ -46,9 +46,6 @@ var opTheme = (function() {
   var timeoutId = undefined;
   return {
     callback: {
-      keyboard: function(ev) {
-        log("keyboard!!!!");
-      },
       actionDelete: function(ev) {
       
         ev.preventDefault();
@@ -58,7 +55,7 @@ var opTheme = (function() {
             id = el.attr('data-id');
       
         OP.Util.makeRequest(url, el.parent().serializeArray(), function(response) {
-          if(response.code === 200)
+          if(response.code === 204)
             $(".action-container-"+id).hide('medium', function(){ $(this).remove(); });
           else
             opTheme.message.error('Could not delete the photo.');
@@ -73,7 +70,7 @@ var opTheme = (function() {
         opTheme.ui.batchMessage();
         log("Adding photo " + photo.id);
       },
-      batchClear: function(photo) {
+      batchClear: function() {
         var el = $("#batch-message").parent();
         $(".pinned").removeClass("pinned").addClass("unpinned").children().filter(".pin").fadeOut();
         el.slideUp('fast', function(){ $(this).remove(); });
@@ -83,6 +80,9 @@ var opTheme = (function() {
             val = el.val(),
             tgt = $("form#batch-edit .form-fields");
         switch(val) {
+          case 'delete':
+            tgt.html(opTheme.ui.batchFormFields.empty());
+            break;
           case 'permission':
             tgt.html(opTheme.ui.batchFormFields.permission());
             break;
@@ -106,12 +106,13 @@ var opTheme = (function() {
               '        <option value="tagsAdd">Add Tags</option>' +
               '        <option value="tagsRemove">Remove Tags</option>' +
               '        <option value="permission">Permission</option>' +
+              '        <option value="delete">Delete</option>' +
               '      </select>' +
               '    </div>' +
               '  </div>' +
               '  <div class="form-fields">'+opTheme.ui.batchFormFields.tags()+'</div>' +
               '</form>',
-              '<a href="#" class="btn photo-update-batch-click">Update</a>'
+              '<a href="#" class="btn photo-update-batch-click">Submit</a>'
             );
         el.html(html);
         OP.Util.fire('callback:tags-autocomplete');
@@ -133,7 +134,7 @@ var opTheme = (function() {
             url = el.attr('href')+'.json';
 
         OP.Util.makeRequest(url, {}, function(response) {
-          if(response.code === 200) {
+          if(response.code === 204) {
             el.parent().remove();
             opTheme.message.confirm('Credential successfully deleted.');
           } else {
@@ -168,6 +169,20 @@ var opTheme = (function() {
         });
         return false;
       },
+      keyBrowseNext: function(ev) {
+          var ref;
+          ref = $(".image-pagination .next a").attr("href");
+          if (ref) {
+              location.href = ref;
+          }
+      },
+      keyBrowsePrevious: function(ev) {
+          var ref;
+          ref = $(".image-pagination .previous a").attr("href");
+          if (ref) {
+              location.href = ref;
+          }
+      },
       login: function(ev) {
         var el = $(ev.target);
         if(el.hasClass('browserid')) {
@@ -201,7 +216,7 @@ var opTheme = (function() {
           	url = el.parent().attr('action')+'.json';
       
         OP.Util.makeRequest(url, el.parent().serializeArray(), function(response) {
-          if(response.code === 200) {
+          if(response.code === 204) {
             el.html('This photo has been deleted');
             opTheme.message.confirm('This photo has been deleted.');
           } else {
@@ -235,16 +250,29 @@ var opTheme = (function() {
         ev.preventDefault();
         var el = $(ev.target),
             key = $("#batch-key").val(),
-            value = $("form#batch-edit").find("*[name='value']").val();
+            fields = $("form#batch-edit").find("*[name='value']"),
+            value;
+
+        if(fields.length == 1)
+          value = fields.val();
+        else
+          value = $("form#batch-edit").find("*[name='value']:checked").val();
+
         params = {'crumb':crumb};
         params[key] = value;
         params['ids'] = OP.Batch.collection.getIds().join(',');
-        log(params);
-        OP.Util.makeRequest('/photos/update.json', params, opTheme.callback.photoUpdateBatchCb, 'json', 'post');
+        if(key !== 'delete') {
+          OP.Util.makeRequest('/photos/update.json', params, opTheme.callback.photoUpdateBatchCb, 'json', 'post');
+        } else {
+          OP.Util.makeRequest('/photos/delete.json', params, opTheme.callback.photoUpdateBatchCb, 'json', 'post');
+        }
       },
       photoUpdateBatchCb: function(response) {
         if(response.code == 200) {
           opTheme.message.append(messageMarkup('Your photos were successfully updated.', 'confirm'));
+        } else if(response.code == 204) {
+          OP.Batch.clear();
+          opTheme.message.append(messageMarkup('Your photos were successfully deleted.', 'confirm'));
         } else {
           opTheme.message.append(messageMarkup('There was a problem updating your photos.', 'error'));
         }
@@ -264,16 +292,6 @@ var opTheme = (function() {
       pinClearClick: function(ev) {
         ev.preventDefault();
         OP.Batch.clear();
-      },
-      pinOver: function(ev) {
-        var el = $(ev.target),
-            a = el.parent().prev();
-        a.fadeIn('fast');
-      },
-      pinOut: function(ev) {
-        var el = $(ev.target),
-            a = el.filter('[class~="unpinned"]').children().filter('.pin').filter(':visible');
-        a.fadeOut('fast');
       },
       pluginStatus: function(ev) {
         ev.preventDefault();
@@ -317,19 +335,16 @@ var opTheme = (function() {
         $("li#nav-signin").toggleClass('active');
         return false;
       },
-      keyBrowseNext: function(ev) {
-          var ref;
-          ref = $(".image-pagination .next a").attr("href");
-          if (ref) {
-              location.href = ref;
-          }
+      uploadCompleteSuccess: function() {
+        $("form.upload").fadeOut('fast', function() {
+          $(".upload-progress").fadeOut('fast', function() { $(".upload-complete").fadeIn('fast'); });
+          $(".upload-share").fadeIn('fast');
+        });
       },
-      keyBrowsePrevious: function(ev) {
-          var ref;
-          ref = $(".image-pagination .previous a").attr("href");
-          if (ref) {
-              location.href = ref;
-          }
+      uploadCompleteFailure: function() {
+        $("form.upload").fadeOut('fast', function() {
+          $(".upload-progress").fadeOut('fast', function() { $(".upload-warning .failed").html(failed); $(".upload-warning .total").html(total); $(".upload-warning").fadeIn('fast'); });
+        });
       },
       webhookDelete: function(ev) {
         ev.preventDefault();
@@ -337,7 +352,7 @@ var opTheme = (function() {
             url = el.attr('href')+'.json';
 
         OP.Util.makeRequest(url, {}, function(response) {
-          if(response.code === 200) {
+          if(response.code === 204) {
             el.parent().remove();
             opTheme.message.confirm('Credential successfully deleted.');
           } else {
@@ -531,27 +546,28 @@ var opTheme = (function() {
         OP.Util.on('click:group-update', opTheme.callback.groupPost);
         OP.Util.on('click:login', opTheme.callback.login);
         OP.Util.on('click:modal-close', opTheme.callback.modalClose);
+        OP.Util.on('click:nav-item', opTheme.callback.searchBarToggle);
         OP.Util.on('click:photo-delete', opTheme.callback.photoDelete);
         OP.Util.on('click:photo-edit', opTheme.callback.photoEdit);
         OP.Util.on('click:photo-update-batch', opTheme.callback.photoUpdateBatch);
         OP.Util.on('click:plugin-status', opTheme.callback.pluginStatus);
         OP.Util.on('click:plugin-update', opTheme.callback.pluginUpdate);
-        OP.Util.on('click:nav-item', opTheme.callback.searchBarToggle);
+        OP.Util.on('click:pin', opTheme.callback.pinClick);
+        OP.Util.on('click:pin-clear', opTheme.callback.pinClearClick);
         OP.Util.on('click:search', opTheme.callback.searchByTags);
         OP.Util.on('click:settings', opTheme.callback.settings);
         OP.Util.on('click:webhook-delete', opTheme.callback.webhookDelete);
-        OP.Util.on('click:pin', opTheme.callback.pinClick);
-        OP.Util.on('click:pin-clear', opTheme.callback.pinClearClick);
         OP.Util.on('keydown:browse-next', opTheme.callback.keyBrowseNext);
         OP.Util.on('keydown:browse-previous', opTheme.callback.keyBrowsePrevious);
-        OP.Util.on('mouseover:pin', opTheme.callback.pinOver);
-        OP.Util.on('mouseout:pin', opTheme.callback.pinOut);
         OP.Util.on('change:batch-field', opTheme.callback.batchField);
 
         OP.Util.on('callback:tags-autocomplete', opTheme.init.tags.autocomplete);
         OP.Util.on('callback:batch-add', opTheme.callback.batchAdd);
         OP.Util.on('callback:batch-remove', opTheme.callback.batchRemove);
         OP.Util.on('callback:batch-clear', opTheme.callback.batchClear);
+
+        OP.Util.on('upload:complete-success', opTheme.callback.uploadCompleteSuccess);
+        OP.Util.on('upload:complete-failure', opTheme.callback.uploadCompleteFailure);
 
         OP.Util.fire('callback:tags-autocomplete');
 
@@ -692,6 +708,9 @@ var opTheme = (function() {
 		}, 
     ui: {
       batchFormFields: {
+        empty: function() {
+          return '';
+        },
         permission: function() {
           return '  <div class="clearfix">' +
                  '    <label>Value</label>' +
@@ -733,7 +752,7 @@ var opTheme = (function() {
           opTheme.message.append(
             messageMarkup(
               '  <a id="batch-message"></a>You have <span id="batch-count">'+idsLength+'</span> photos pinned.' +
-              '  <div class="alert-actions"><a class="btn small info batch-modal-click" data-controls-modal="modal" data-backdrop="static">Batch edit</a><a href="#" class="btn small pin-clear-click">Or clear pins</a></div>'
+              '  <div class="alert-actions"><a class="btn small info batch-modal-click" data-controls-modal="modal" data-backdrop="static">Batch edit</a><a href="#" class="btn small pin-selectall-click">Select all pins</a><a href="#" class="btn small pin-clear-click">Or clear pins</a></div>'
             )
           );
         }

@@ -18,6 +18,7 @@ class BaseModel
     $this->logger = getLogger();
     $this->route = getRoute();
     $this->session = getSession();
+    $this->cache = getCache();
     
     // really just for setup when the systems don't yet exist
     if(isset($this->config->systems))
@@ -25,5 +26,14 @@ class BaseModel
       $this->db = getDb();
       $this->fs = getFs();
     }
+  }
+
+  /*
+   * Inject values for unit tests
+   * returns void
+   */
+  public function inject($key, $value)
+  {
+    $this->$key = $value;
   }
 }

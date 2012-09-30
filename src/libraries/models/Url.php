@@ -15,10 +15,70 @@ class Url
     return $utilityObj->returnValue(sprintf('/action/%s/delete', $utilityObj->safe($id, false)), $write);
   }
 
+  public function albumView($id, $write = true)
+  {
+    $utilityObj = new Utility;
+    return $utilityObj->returnValue(sprintf('/album/%s', $utilityObj->safe($id, false)), $write);
+  }
+
+  public function albumsView($write = true)
+  {
+    $utilityObj = new Utility;
+    return $utilityObj->returnValue('/albums/list', $write);
+  }
+
+  public function manage($write = true)
+  {
+    $utilityObj = new Utility;
+    return $utilityObj->returnValue('/manage', $write);
+  }
+
+  public function manageAlbums($write = true)
+  {
+    $utilityObj = new Utility;
+    return $utilityObj->returnValue('/manage/albums', $write);
+  }
+
+  public function manageApps($write = true)
+  {
+    $utilityObj = new Utility;
+    return $utilityObj->returnValue('/manage/apps', $write);
+  }
+
+  public function manageGroups($write = true)
+  {
+    $utilityObj = new Utility;
+    return $utilityObj->returnValue('/manage/groups', $write);
+  }
+
+  public function managePhotos($write = true)
+  {
+    $utilityObj = new Utility;
+    return $utilityObj->returnValue('/manage/photos', $write);
+  }
+
+  public function manageSettings($write = true)
+  {
+    $utilityObj = new Utility;
+    return $utilityObj->returnValue('/manage/settings', $write);
+  }
+
+  public function resourceMap($id, $write = true)
+  {
+    $utilityObj = new Utility;
+    return $utilityObj->returnValue(sprintf('/s/%s', $id), $write);
+  }
+
   public function photoDelete($id, $write = true)
   {
     $utilityObj = new Utility;
     return $utilityObj->returnValue(sprintf('/photo/%s/delete', $utilityObj->safe($id, false)), $write);
+  }
+
+  public function photoDownload($photo, $write = true)
+  {
+    $utilityObj = new Utility;
+    return $utilityObj->returnValue(sprintf('/photo/%s/download', $photo['id']), $write);
   }
 
   public function photoEdit($id, $write = true)
@@ -43,10 +103,18 @@ class Url
   {
     $utilityObj = new Utility;
     $options = preg_replace('#/page-\d+#', '', $options);
+    $noOptionsStr = '/p/%s';
+    $optionsStr = '/p/%s/%s';
+    if(isset($_SERVER['REDIRECT_URL']) && preg_match('#^/photo/#', $_SERVER['REDIRECT_URL']))
+    {
+      $noOptionsStr = '/photo/%s/view';
+      $optionsStr = '/photo/%s/%s/view';
+    }
+      
     if(empty($options))
-      return $utilityObj->returnValue(sprintf('/photo/%s/view', $utilityObj->safe($id, false)), $write);
+      return $utilityObj->returnValue(sprintf($noOptionsStr, $utilityObj->safe($id, false)), $write);
     else
-      return $utilityObj->returnValue(sprintf('/photo/%s/%s/view', $utilityObj->safe($id, false), $options), $write);
+      return $utilityObj->returnValue(sprintf($optionsStr, $utilityObj->safe($id, false), $options), $write);
   }
 
   public function photosView($options = null, $write = true)
@@ -70,6 +138,12 @@ class Url
     return $utilityObj->returnValue('/photos/upload', $write);
   }
 
+  public function setup($write = true)
+  {
+    $utilityObj = new Utility;
+    return $utilityObj->returnValue('/setup?edit', $write);
+  }
+
   public function tagsView($write = true)
   {
     $utilityObj = new Utility;
@@ -81,7 +155,7 @@ class Url
     $utilityObj = new Utility;
     $ret = array();
     foreach($tags as $tag)
-      $ret[] = sprintf('<a href="%s">%s</a>', self::photosView("tags-{$tag}", false), $utilityObj->safe($tag, false));
+      $ret[] = sprintf('<a href="%s">%s</a>', $this->photosView("tags-{$tag}", false), $utilityObj->safe($tag, false));
 
     return $utilityObj->returnValue(implode(', ', $ret), $write);
   }
@@ -92,9 +166,14 @@ class Url
     return $utilityObj->returnValue('/user/logout', $write);
   }
 
-  public function userSettings($write = true)
+  public function userManage($write = true)
   {
     $utilityObj = new Utility;
-    return $utilityObj->returnValue('/user/settings', $write);
+    return $utilityObj->returnValue('/manage', $write);
+  }
+
+  public function userSettings($write = true)
+  {
+    return $this->userManage($write);
   }
 }

@@ -11,7 +11,7 @@ class DatabaseSimpleDb implements DatabaseInterface
     * Member variables holding the names to the SimpleDb domains needed and the database object itself.
     * @access private
     */
-  private $config, $db, $domainAction, $domainCredential, $domainPhoto, 
+  private $config, $db, $domainAction, $domainActivity, $domainAlbum, $domainCredential, $domainPhoto, 
     $domainTag, $domainUser, $domainWebhook, $errors = array(), $owner;
 
   /**
@@ -32,6 +32,8 @@ class DatabaseSimpleDb implements DatabaseInterface
 
     $this->domainPhoto = $this->config->aws->simpleDbDomain;
     $this->domainAction = $this->config->aws->simpleDbDomain.'Action';
+    $this->domainActivity = $this->config->aws->simpleDbDomain.'Activity';
+    $this->domainAlbum = $this->config->aws->simpleDbDomain.'Album';
     $this->domainCredential = $this->config->aws->simpleDbDomain.'Credential';
     $this->domainGroup = $this->config->aws->simpleDbDomain.'Group';
     $this->domainUser = $this->config->aws->simpleDbDomain.'User';
@@ -65,6 +67,17 @@ class DatabaseSimpleDb implements DatabaseInterface
   }
 
   /**
+    * Delete an album from the database
+    *
+    * @param string $id ID of the action to delete
+    * @return boolean
+    */
+  public function deleteAlbum($id)
+  {
+    return false;
+  }
+
+  /**
     * Delete credential
     *
     * @return boolean
@@ -90,7 +103,7 @@ class DatabaseSimpleDb implements DatabaseInterface
   }
 
   /**
-    * Delete a photo from the database
+    * Delete a photo in it's entirety from the database
     *
     * @param string $id ID of the photo to delete
     * @return boolean
@@ -103,6 +116,31 @@ class DatabaseSimpleDb implements DatabaseInterface
     $res = $this->db->delete_attributes($this->domainPhoto, $photo['id']);
     $this->logErrors($res);
     return $res->isOK();
+  }
+
+  /**
+    * Delete a photos versions excluding base and original
+    *
+    * @param string $id ID of the photo to delete versions of
+    * @return boolean
+    */
+  public function deletePhotoVersions($photo)
+  {
+    if(!isset($photo['id']))
+      return false;
+
+    $photo = $this->getPhoto($photo['id']);
+    $attrs = array();
+    foreach($photo as $key => $val)
+    {
+      if(preg_match('/^path/', $key) === 1 && !in_array($key, array('pathOriginal', 'pathBase')))
+      {
+        $attrs[] = array('Name' => $key);
+      }
+    }
+
+    $res = $this->db->delete_attributes($this->domainPhoto, $photo['id'], $attrs);
+    return $res !== false;
   }
 
   /**
@@ -198,6 +236,70 @@ class DatabaseSimpleDb implements DatabaseInterface
       return self::normalizeAction($res->body->SelectResult->Item);
     else
       return false;
+  }
+
+  /**
+    * Retrieves activity
+    *
+    * @return mixed Array on success, FALSE on failure
+    */
+  public function getActivity($id)
+  {
+    $res = $this->db->select("SELECT * FROM `{$this->domainActivities}` WHERE itemName()='{$id}'", array('ConsistentRead' => 'true'));
+    $this->logErrors($res);
+    if(isset($res->body->SelectResult->Item))
+      return self::normalizeActivity($res->body->SelectResult->Item);
+    else
+      return false;
+  }
+
+  /**
+    * Retrieves activities
+    *
+    * @return mixed Array on success, FALSE on failure
+    */
+  public function getActivities($filter = array(), $limit = 10)
+  {
+    $res = $this->db->select("SELECT * FROM `{$this->domainActivities}`", array('ConsistentRead' => 'true'));
+    $this->logErrors($res);
+    if(isset($res->body->SelectResult->Item))
+      return self::normalizeActivity($res->body->SelectResult->Item);
+    else
+      return false;
+  }
+
+  /**
+    * Retrieves album
+    *
+    * @param string $id ID of the album to get
+    * @param string $email email of viewer to determine which albums they have access to
+    * @return mixed Array on success, FALSE on failure
+    */
+  public function getAlbum($id, $email)
+  {
+    return false;
+  }
+
+  /**
+    * Retrieve elements for an album
+    *
+    * @param string $id ID of the album to get elements of
+    * @return mixed Array on success, FALSE on failure
+    */
+  public function getAlbumElements($id)
+  {
+    return false;
+  }
+
+  /**
+    * Retrieve albums
+    *
+    * @param string $email email of viewer to determine which albums they have access to
+    * @return mixed Array on success, FALSE on failure
+    */
+  public function getAlbums($email, $limit = null, $offset = null)
+  {
+    return false;
   }
 
   /**
@@ -320,7 +422,7 @@ class DatabaseSimpleDb implements DatabaseInterface
     */
   public function getPhotoNextPrevious($id, $filterOpts = null)
   {
-    $buildQuery = self::buildQuery($filterOpts, null, null);
+    $buildQuery = $this->buildQuery($filterOpts, null, null);
     $photo = $this->getPhoto($id);
     if(!$photo)
       return false;
@@ -380,7 +482,7 @@ class DatabaseSimpleDb implements DatabaseInterface
     */
   public function getPhotos($filters = array(), $limit = 20, $offset = null)
   {
-    $buildQuery = self::buildQuery($filters, $limit, $offset);
+    $buildQuery = $this->buildQuery($filters, $limit, $offset);
     $queue = $this->getBatchRequest();
     $this->db->batch($queue)->select("SELECT * FROM `{$this->domainPhoto}` {$buildQuery['where']} {$buildQuery['sortBy']} LIMIT {$buildQuery['limit']}", $buildQuery['params']);
     if(isset($buildQuery['params']['NextToken']))
@@ -400,6 +502,18 @@ class DatabaseSimpleDb implements DatabaseInterface
       $photos[0]['totalRows'] = intval($responses[1]->body->SelectResult->Item->Attribute->Value);
 
     return $photos;
+  }
+
+  /**
+    * Get a resource map
+    * NOT IMPLEMENTED
+    *
+    * @param string $id tag to be retrieved
+    * @return mixed Array on success, FALSE on failure
+    */
+  public function getResourceMap($id)
+  {
+    return false;
   }
 
   /**
@@ -429,17 +543,21 @@ class DatabaseSimpleDb implements DatabaseInterface
   public function getTags($filters = array())
   {
     $countField = 'countPublic';
+    $sortBy = 'itemName()';
+    if(isset($filters['sortBy']))
+      $sortBy = str_replace(',', ' ', $sortBy);
     if(isset($filter['permission']) && $filter['permission'] == 0)
       $countField = 'countPrivate';
 
+
     if(isset($filter['search']) && $filter['search'] != '')
     {
-      $query = "SELECT * FROM `{$this->domainTag}` WHERE `{$countField}` IS NOT NULL AND `{$countField}` > '0' AND itemName() IS NOT NULL AND itemName() LIKE '{$filter['search']}%' ORDER BY itemName()";
+      $query = "SELECT * FROM `{$this->domainTag}` WHERE `{$countField}` IS NOT NULL AND `{$countField}` > '0' AND itemName() IS NOT NULL AND itemName() LIKE '{$filter['search']}%' ORDER BY {$sortBy})";
       $params[':search'] = "{$filter['search']}%";
     }
     else
     {
-      $query = "SELECT * FROM `{$this->domainTag}` WHERE `{$countField}` IS NOT NULL AND `{$countField}` > '0' AND itemName() IS NOT NULL ORDER BY itemName()";
+      $query = "SELECT * FROM `{$this->domainTag}` WHERE `{$countField}` IS NOT NULL AND `{$countField}` > '0' AND itemName() IS NOT NULL ORDER BY {$sortBy}";
     }
 
     $res = $this->db->select($query, array('ConsistentRead' => 'false'));
@@ -476,6 +594,24 @@ class DatabaseSimpleDb implements DatabaseInterface
       return self::normalizeUser($res->body->SelectResult->Item);
     elseif(isset($res->body->SelectResult))
       return null;
+    else
+      return false;
+  }
+
+  /**
+    * Get the user record entry by username and password.
+    *
+    * @return mixed Array on success, otherwise FALSE
+    */
+  public function getUserByEmailAndPassword($email = null, $password = null)
+  {
+    if($email == '' || $password == '')
+      return false;;
+
+    $res = $this->db->select("SELECT * FROM `{$this->domainUser}` WHERE itemName()='{$email}' AND `password`='{$password}", array('ConsistentRead' => 'true'));
+    $this->logErrors($res);
+    if(isset($res->body->SelectResult->Item))
+      return self::normalizeUser($res->body->SelectResult->Item);
     else
       return false;
   }
@@ -566,6 +702,45 @@ class DatabaseSimpleDb implements DatabaseInterface
   public function inject($name, $value)
   {
     $this->$name = $value;
+  }
+
+  /**
+    * Add an album
+    *
+    * @param string $albumId ID of the album to update.
+    * @param string $type Type of element
+    * @param array $elementIds IDs of the elements to update.
+    * @return boolean
+    */
+  public function postAlbum($id, $params)
+  {
+    return false;
+  }
+
+  /**
+    * Add an element to an album
+    *
+    * @param string $albumId ID of the album to update.
+    * @param string $type Type of element
+    * @param array $elementIds IDs of the elements to update.
+    * @return boolean
+    */
+  public function postAlbumAdd($albumId, $type, $elementIds)
+  {
+    return false;
+  }
+
+  /**
+    * Remove an element from an album
+    *
+    * @param string $albumId ID of the album to update.
+    * @param string $type Type of element
+    * @param array $elementIds IDs of the elements to update.
+    * @return boolean
+    */
+  public function postAlbumRemove($albumId, $type, $elementIds)
+  {
+    return false;
   }
 
   /**
@@ -675,6 +850,8 @@ class DatabaseSimpleDb implements DatabaseInterface
   public function postUser($params)
   {
     // make sure we don't overwrite an existing user record
+    if(isset($params['password']) && empty($params['password']))
+      unset($params['password']);
     $res = $this->db->put_attributes($this->domainUser, $this->owner, $params, true);
     $this->logErrors($res);
     return $res->isOK();
@@ -706,6 +883,34 @@ class DatabaseSimpleDb implements DatabaseInterface
   public function putAction($id, $params)
   {
     $res = $this->db->put_attributes($this->domainAction, $id, $params);
+    $this->logErrors($res);
+    return $res->isOK();
+  }
+
+  /**
+    * Add a new album to the database
+    * This method does not overwrite existing values present in $params - hence "new action".
+    *
+    * @param string $id ID of the action to update which is always 1.
+    * @param array $params Attributes to update.
+    * @return boolean
+    */
+  public function putAlbum($id, $params)
+  {
+    return false;
+  }
+
+  /**
+    * Add a new activity to the database
+    * This method does not overwrite existing values present in $params - hence "new action".
+    *
+    * @param string $id ID of the action to update which is always 1.
+    * @param array $params Attributes to update.
+    * @return boolean
+    */
+  public function putActivity($id, $params)
+  {
+    $res = $this->db->put_attributes($this->domainActivity, $id, $params);
     $this->logErrors($res);
     return $res->isOK();
   }
@@ -750,6 +955,19 @@ class DatabaseSimpleDb implements DatabaseInterface
   }
 
   /**
+    * Create a resource map
+    * NOT IMPLEMENTED
+    *
+    * @param string $id resource map to be retrieved
+    * @param array $params Attributes to create
+    * @return mixed Array on success, FALSE on failure
+    */
+  public function putResourceMap($id, $params)
+  {
+    return false;
+  }
+
+  /**
     * Add a new tag to the database
     * This method does not overwrite existing values present in $params - hence "new user".
     *
@@ -776,6 +994,8 @@ class DatabaseSimpleDb implements DatabaseInterface
     */
   public function putUser($params)
   {
+    if(isset($params['password']) && empty($params['password']))
+      unset($params['password']);
     $res = $this->db->put_attributes($this->domainUser, $this->owner, $params);
     $this->logErrors($res);
     return $res->isOK();
@@ -826,6 +1046,9 @@ class DatabaseSimpleDb implements DatabaseInterface
       {
         switch($name)
         {
+          case 'hash':
+            $where = $this->buildWhere($where, "hash='{$value}')");
+            break;
           case 'groups':
             $where = $this->buildWhere($where, "(groups IN('" . implode("','", $value) . "') OR permission='1')");
             break;
@@ -849,6 +1072,10 @@ class DatabaseSimpleDb implements DatabaseInterface
             if(!is_array($value))
               $value = (array)explode(',', $value);
             $where = $this->buildWhere($where, "tags IN('" . implode("','", $value) . "')");
+            break;
+          case 'type': // type for activities
+            $value = $this->_($value);
+            $where = $this->buildWhere($where, "type='{$value}'");
             break;
         }
       }
@@ -946,6 +1173,26 @@ class DatabaseSimpleDb implements DatabaseInterface
       $action[$name] = $value;
     }
     return $action;
+  }
+
+  /**
+    * Normalizes data from simpleDb into schema definition
+    *
+    * @param SimpleXMLObject $raw An action from SimpleDb in SimpleXML.
+    * @return array
+    */
+  private function normalizeActivity($raw)
+  {
+    $activity = array();
+    $activity['id'] = strval($raw->Name);
+    $activity['appId'] = $this->config->application->appId;
+    foreach($raw->Attribute as $item)
+    {
+      $name = (string)$item->Name;
+      $value = (string)$item->Value;
+      $activity[$name] = $value;
+    }
+    return $activity;
   }
 
   /**

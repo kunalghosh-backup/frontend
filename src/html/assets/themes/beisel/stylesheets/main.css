@@ -371,6 +371,10 @@ nav>ul>li a {
   padding:0 10px 0 34px;
 }
 
+nav>ul>li#nav-manage a {
+  background:transparent url("../images/icons.png") 10px -113px no-repeat;
+}
+
 nav>ul>li#nav-photos a {
   background:transparent url("../images/icons.png") 10px 2px no-repeat;
 }
@@ -1286,10 +1290,6 @@ ul.photo-grid {
   text-align:left;
 }
 
-.grid-item:hover {
-  background-color:#f1f1f1;
-}
-
 .photo-grid.size440x292xCR .grid-item {
   margin-right:5px;
   margin-bottom:10px;
@@ -1354,28 +1354,6 @@ ul.photo-grid {
 
 .grid-item a ul.meta li.geo span {
   background:transparent url("../images/icons.png") 0 -626px no-repeat;
-}
-
-a.pin {
-  background:#fff url("../images/icons.png") 3px -1146px no-repeat;
-  position:absolute;
-  width:17px;
-  height:30px;
-  display:block;
-  z-index:1000;
-  padding:3px;
-  border-radius:3px;
-  margin:6px 0 0 6px;
-  -webkit-box-shadow:inset 0px 0px 5px 0px #999;
-  -moz-box-shadow:inset 0px 0px 5px 0px #999;
-  box-shadow:inset 0px 0px 5px 0px #999;
-  cursor:pointer;
-  display:block;
-}
-
-.unpinned a.pin {
-  background:#fff url("../images/icons.png") 3px -1106px no-repeat;
-  display:none;
 }
 
 .grid-item a ul.meta li.geo span {
@@ -1462,10 +1440,6 @@ aside.sidebar .meta {
   padding:0;
   width:139px;
 }
-.image-pagination li.previous a.pin {
-  margin-left:55px;
-}
-
 .image-pagination li a img {
   -webkit-border-radius: 2px;
   -moz-border-radius: 2px;
@@ -1597,7 +1571,7 @@ aside.sidebar .meta li span {
   top:2px;
   left:0;
   position:absolute;
-  width:15px;
+  width:20px;
 }
 
 aside.sidebar .meta li.date span {
@@ -1618,6 +1592,9 @@ aside.sidebar .meta li.license span {
 
 aside.sidebar .meta li.location span {
   background:transparent url("../images/icons.png") 0 -626px no-repeat;
+}
+aside.sidebar .meta li.original span {
+  background:transparent url("../images/icons.png") 0px 0px no-repeat;
 }
 
 aside.sidebar .meta li.location img {
@@ -1663,6 +1640,7 @@ aside.sidebar .meta li.edit span {
   margin:0;
   padding:3px;
   width:99%;
+  resize:vertical;
 }
 
 .comment-form textarea[disabled],
@@ -1816,14 +1794,6 @@ aside.sidebar .meta li.edit span {
     font-size:21px;
 }
 
-
-/* UPLOAD ********/
-body.upload form.upload {
-  margin:0 10px;
-}
-body.upload .poweredby a {
-  font-style:italic;
-}
 
 /* 04.08 Setup *************************************************** */
 
@@ -2010,7 +1980,7 @@ nav ul li#nav-search {
   padding:0;
   margin:10px 5px 0 0;
   position:absolute;
-  left:295px;
+  left:335px;
   z-index:9999;
 }
 nav>ul>li#nav-search:hover {
@@ -2171,4 +2141,11 @@ form {
 }
 .alert-actions a.btn {
   margin-right:4px;
+}
+
+/* fbml override */
+.fb-send iframe.fb_ltr, .fb-like iframe.fb_ltr {
+  overflow:visible;
+  min-height:20px !important;
+  min-width:57px; !important;
 }

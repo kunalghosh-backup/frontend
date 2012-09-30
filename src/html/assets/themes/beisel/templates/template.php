@@ -11,17 +11,28 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="shortcut icon" href="<?php $this->theme->asset('image', 'favicon.png'); ?>">
     <link rel="apple-touch-icon" href="<?php $this->theme->asset('image', 'apple-touch-icon.png'); ?>">
-    <link rel="stylesheet" href="<?php echo getAssetPipeline(true)->addCss($this->theme->asset('stylesheet', 'bootstrap.min.css', false))->
-                                                               addCss($this->theme->asset('stylesheet', 'main.css', false))->
-                                                               addCss("/assets/stylesheets/upload.css")->
-                                                               getUrl(AssetPipeline::css, 'b'); ?>">
+    <?php if($this->config->site->mode === 'dev') { ?>
+      <link rel="stylesheet" href="<?php $this->theme->asset('stylesheet', 'bootstrap.min.css'); ?>">
+      <link rel="stylesheet" href="/assets/stylesheets/upload.css">
+      <link rel="stylesheet" href="<?php $this->theme->asset('stylesheet', 'main.css'); ?>">
+      <?php if(true || $this->user->isOwner()) { ?>
+        <link rel="stylesheet" href="<?php $this->theme->asset('stylesheet', 'owner.css'); ?>">
+      <?php } ?>
+    <?php } else { ?>
+      <link rel="stylesheet" href="<?php echo getAssetPipeline(true)->addCss($this->theme->asset('stylesheet', 'bootstrap.min.css', false))->
+                                                                  addCss("/assets/stylesheets/upload.css")->
+                                                                  addCss($this->theme->asset('stylesheet', 'main.css', false))->
+                                                                  getUrl(AssetPipeline::css, 'i'); ?>">
+      <?php if(true || $this->user->isOwner()) { ?>
+        <link rel="stylesheet" href="<?php echo getAssetPipeline(true)->addCss($this->theme->asset('stylesheet', 'owner.css', false))->
+                                                                  getUrl(AssetPipeline::css, 'd'); ?>">
+      <?php } ?>
+    <?php } ?>
 
-    <?php $this->plugin->invoke('onHead', array('page' => $page)); ?>
+    <?php $this->plugin->invoke('renderHead'); ?>
 </head>
 
 <body class="<?php echo $page; ?>">
-  <?php $this->plugin->invoke('onBodyBegin', array('page' => $page)); ?>
-
   <div id="wrapper" class="container">
 
     <div class="row">
@@ -30,7 +41,7 @@
       </header>
     </div>
     
-    <div id="message" class="row"></div>
+    <div id="message"></div>
 
     <div class="row">
       <article id="main" role="main">
@@ -54,7 +65,7 @@
     <script type="text/javascript" src="<?php $this->theme->asset('util'); ?>"></script>
   <?php } else { ?>
     <script type="text/javascript" src="<?php echo getAssetPipeline(true)->addJs($this->theme->asset($this->config->dependencies->javascript, null, false))->
-                                                                      addJs($this->theme->asset('util', null, false))->getUrl(AssetPipeline::js, 'b'); ?>"></script>
+                                                                      addJs($this->theme->asset('util', null, false))->getUrl(AssetPipeline::js, 'd'); ?>"></script>
   <?php } ?>
   <script>
     OP.Util.init(jQuery, {
@@ -79,21 +90,18 @@
             'photo-thumbnail-click':'click:photo-thumbnail',
             'photo-update-click':'click:photo-update',
             'photo-update-batch-click':'click:photo-update-batch',
+            'pin-click':'click:pin',
+            'pin-clear-click':'click:pin-clear',
             'plugin-status-click':'click:plugin-status',
             'plugin-update-click':'click:plugin-update',
             'search-click':'click:search',
             'settings-click':'click:settings',
-            'webhook-delete-click':'click:webhook-delete',
-            'pin-click':'click:pin',
-            'pin-clear-click':'click:pin-clear'
+            'upload-start-click':'click:upload-start',
+            'webhook-delete-click':'click:webhook-delete'
         },
         <?php if($this->user->isOwner()) { ?>
           'change': {
               'batch-field-change':'change:batch-field'
-          },
-          'mouseover': {
-              'pin-over':'mouseover:pin',
-              'pin-out':'mouseout:pin',
           },
         <?php } ?>
         'keydown': {
@@ -110,7 +118,7 @@
               '/assets/javascripts/jquery.plupload.queue.js',
               '/assets/javascripts/openphoto-upload.js',
             <?php } else { ?>
-              '<?php echo getAssetPipeline(true)->addJs('/assets/javascripts/openphoto-upload.min.js')->getUrl(AssetPipeline::js, 'b'); ?>',
+              '<?php echo getAssetPipeline(true)->addJs('/assets/javascripts/openphoto-upload.min.js')->getUrl(AssetPipeline::js, 'f'); ?>',
             <?php } ?>
           <?php } ?>
 
@@ -124,7 +132,7 @@
           <?php } else { ?>
             '<?php echo getAssetPipeline(true)->addJs('/assets/javascripts/openphoto-batch.min.js')->
                                                 addJs($this->theme->asset('javascript', 'openphoto-theme-full-min.js', false))->
-                                                getUrl(AssetPipeline::js, 'c'); ?>'
+                                                getUrl(AssetPipeline::js, 'i'); ?>'
           <?php } ?>
         ],
         onComplete: function(){ 
@@ -137,6 +145,6 @@
       }
     });
   </script>
-  <?php $this->plugin->invoke('onBodyEnd', array('page' => $page)); ?>
+  <?php $this->plugin->invoke('renderFooter'); ?>
 </body>
 </html>

@@ -1,14 +1,4 @@
 <?php
-$paths = (array)explode(PATH_SEPARATOR, ini_get('include_path'));
-foreach($paths as $path)
-{
-  if(file_exists("{$path}/vfsStream/vfsStream.php"))
-    require_once 'vfsStream/vfsStream.php';
-}
-$baseDir = dirname(dirname(dirname(dirname(__FILE__))));
-require_once sprintf('%s/tests/helpers/init.php', $baseDir);
-require_once sprintf('%s/libraries/models/AssetPipeline.php', $baseDir);
-
 class AssetPipelineOverride extends AssetPipeline
 {
   public $docroot;
@@ -23,8 +13,8 @@ class AssetPipelineOverride extends AssetPipeline
     if(class_exists('vfsStream'))
     {
       vfsStreamWrapper::register();
-      vfsStreamWrapper::setRoot(new vfsStreamDirectory('testDir'));
-      $config->paths->docroot = vfsStream::url('testDir');
+      vfsStreamWrapper::setRoot(new vfsStreamDirectory('assetDir'));
+      $config->paths->docroot = vfsStream::url('assetDir');
     }
 
     $this->docroot = $config->paths->docroot;
